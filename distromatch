@@ -266,6 +266,7 @@ if __name__ == "__main__":
     parser.add_option("--verbose", action="store_true", help="Verbose output")
     parser.add_option("--debug", action="store_true", help="Debug output")
     parser.add_option("--reindex", action="store_true", help="Rebuild indices")
+    parser.add_option("--stats", action="store_true", help="Print stats instead of matches")
 
     (opts, args) = parser.parse_args()
 
@@ -320,6 +321,7 @@ if __name__ == "__main__":
         dnames = [d.name for d in distros if d.name != args[0]]
         for pkg in todo:
             m = matcher.match(pkg)
+            if opts.stats: continue
             if m is None: m = dict()
             for d in dnames:
                 names = m.get(d, [])
@@ -327,7 +329,7 @@ if __name__ == "__main__":
                         pivot.name, pkg,
                         d, ",".join(sorted(names)))
 
-        if opts.verbose or opts.debug:
+        if opts.stats:
             matcher.match_stats()
     except UserError, e:
         print >>sys.stderr, str(e)
