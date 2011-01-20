@@ -1,0 +1,259 @@
+#!/usr/bin/python
+
+import sys
+import os, os.path
+import xapian
+import logging
+import re
+
+VERSION = "0.1"
+log = logging.getLogger(__name__)
+
+class Distro(object):
+    "Package information from one distro"
+    def __init__(self, name, reindex=False, stemmers={}):
+        self.name = name
+        self.root = os.path.abspath("dist-" + name)
+        self.dbpath = os.path.join(self.root, "db")
+        self.stemmers = stemmers
+        if reindex or not os.path.exists(self.dbpath):
+            self.index()
+        self.db = xapian.Database(self.dbpath)
+
+    def all_packages(self):
+        return set([x.lower().strip() for x in open(os.path.join(self.root, "pkglist"))])
+
+    def index(self):
+        log.info("%s: indexing data", self.name)
+        pkgs = self.all_packages()
+        log.info("%s: %d packages", self.name, len(pkgs))
+
+        # Read desktop file information
+        pkg2desktop = dict()
+        dfiles = 0
+        for line in open(os.path.join(self.root, "pkgdesktop")):
+            name, desktop = line.strip().lower().split(None, 1)
+            if desktop.startswith("fedora-"):
+                desktop = desktop[7:]
+            pkg2desktop.setdefault(name, []).append(desktop)
+            dfiles += 1
+        log.info("%s: %d desktop files", self.name, dfiles)
+
+        # Create a new database
+        db = xapian.WritableDatabase(self.dbpath, xapian.DB_CREATE_OR_OVERWRITE)
+
+        stem_stats = dict([(x, 0) for x in self.stemmers])
+        for name in pkgs:
+            doc = xapian.Document()
+            doc.set_data(name)
+            doc.add_term("XP"+name)
+            for d in pkg2desktop.get(name, []):
+                doc.add_term("XD"+d)
+
+            # Add stemmed forms of the package name
+            for pfx, regex in self.stemmers.iteritems():
+                mo = regex.match(name)
+                if mo:
+                    doc.add_term(pfx+mo.group(1))
+                    stem_stats[pfx] += 1
+
+            db.add_document(doc)
+
+        for k, v in sorted(stem_stats.iteritems(), key=lambda x:x[0]):
+            log.info("%s: stemmer %s matched %d names", self.name, k, v)
+
+        db.flush()
+
+    def stats(self, out=sys.stderr):
+        dfiles = 0
+        for t in self.db.allterms("XD"):
+            dfiles += 1
+        print >>out, "%s: %d packages, %d desktop files" % (self.name, len(self.all_packages()), dfiles)
+
+    def document_for(self, name):
+        enq = xapian.Enquire(self.db)
+        enq.set_query(xapian.Query("XP"+name))
+        mset = enq.get_mset(0, 1)
+        for m in mset:
+            return m.document
+        return None
+
+    def stem(self, name, pfx):
+        regex = self.stemmers[pfx]
+        mo = regex.match(name)
+        if mo: return mo.group(1)
+        return None
+
+class Matcher(object):
+    "Match packages across distros"
+    def __init__(self, distros, pivot):
+        self.distros = [d for d in distros if d is not pivot]
+        self.pivot = pivot
+        self.count_all = 0
+        self.count_notmatched = 0
+        self.counts = dict()
+        self.methods = ["byname", "bydesktop", "bystem_libdevel"]
+        for m in self.methods:
+            self.counts[m] = 0
+
+    def stats(self, out=sys.stderr):
+        self.pivot.stats(out)
+        for d in self.distros:
+            d.stats(out)
+
+    def match_byname(self, name):
+        "Match packages by name"
+        res = dict()
+        for d in self.distros:
+            if d.db.get_termfreq('XP'+name) > 0:
+                res[d.name] = [name]
+        if not res: return None
+        return res
+
+    def match_bydesktop(self, name):
+        "Match packages by desktop files contained within"
+
+        # Get the package info in the starting distro
+        srcdoc = self.pivot.document_for(name)
+
+        # Get the .desktop file terms in the document
+        desktops = []
+        for t in srcdoc.termlist():
+            if t.term.startswith("XD"):
+                desktops.append(t.term)
+
+        # Query each distro for what packages have those desktop files
+        res = dict()
+        for d in self.distros:
+            enq = xapian.Enquire(d.db)
+            enq.set_query(xapian.Query(xapian.Query.OP_OR, desktops))
+            mset = enq.get_mset(0, 100)
+            names = []
+            for m in mset:
+                names.append(m.document.get_data())
+            if names:
+                res[d.name] = names
+
+        if 0:
+            # If we don't find the .desktop file in all distros, print debugging
+            # details
+            if len(res) != len(self.distros):
+                for d in desktops:
+                    distros = [x.name for x in self.distros if d in x.desktop2pkg]
+                    print "Desktop file", d, "is only found in:", ",".join(distros)
+
+        if not res: return None
+        return res
+
+    def match_bystemmer(self, name, pfx):
+        stemmed = self.pivot.stem(name, pfx)
+        if not stemmed: return None
+        term = pfx + stemmed
+
+        # Query the stemmed form in each distro
+        res = dict()
+        for d in self.distros:
+            enq = xapian.Enquire(d.db)
+            enq.set_query(xapian.Query(term))
+            mset = enq.get_mset(0, 100)
+            names = []
+            for m in mset:
+                names.append(m.document.get_data())
+            if names:
+                res[d.name] = names
+
+        if not res: return None
+        return res
+
+    def match_bystem_libdevel(self, name):
+        "Match stemmed form of development library package names"
+        return self.match_bystemmer(name, 'ZDL')
+
+    def match(self, name):
+        self.count_all += 1
+        attempts = []
+        for m in self.methods:
+            res = getattr(self, "match_" + m)(name)
+            if res:
+                self.counts[m] += 1
+                attempts.append(res)
+        if not attempts:
+            if 0:
+                print "Not matched:", name
+            self.count_notmatched += 1
+            return None
+        return True
+
+    def match_stats(self, out=sys.stderr):
+        print >>out, "%d packages tested" % self.count_all
+        print >>out, "Founds by method:"
+        for m in self.methods:
+            doc = getattr(self, "match_" + m).__doc__
+            print >>out, "%d matched by %s" % (self.counts[m], doc)
+        print >>out, "%d not matched" % self.count_notmatched
+
+
+
+if __name__ == "__main__":
+    from optparse import OptionParser
+
+    # Parser for command line
+    class Parser(OptionParser):
+        def __init__(self, *args, **kwargs):
+            OptionParser.__init__(self, add_help_option=False, *args, **kwargs)
+
+        def error(self, msg):
+            sys.stderr.write("%s: error: %s\n\n" % (self.get_prog_name(), msg))
+            self.print_help(sys.stderr)
+            sys.exit(2)
+
+    parser = Parser(usage="usage: %prog [options] distro [name]",
+                    version="%prog "+ VERSION,
+                    description="Match package names across distros")
+    parser.add_option("--quiet", action="store_true", help="Verbose output")
+    parser.add_option("--debug", action="store_true", help="Debug output")
+    parser.add_option("--reindex", action="store_true", help="Rebuild indices")
+
+    (opts, args) = parser.parse_args()
+
+    if not opts.quiet and not opts.debug:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    elif opts.debug:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    else:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+
+    if not args:
+        parser.error("please provide a distribution name")
+
+    distros = [
+        Distro("debian", reindex=opts.reindex, stemmers={
+            'ZDL': re.compile('lib(.+?)-dev')
+        }),
+        Distro("fedora", reindex=opts.reindex, stemmers={
+            'ZDL': re.compile('(?:lib)?(.+?)-devel')
+        }),
+    ]
+
+    distro_map = dict([(x.name, x) for x in distros])
+
+    pivot = distro_map.get(args[0], None)
+    if pivot is None:
+        log.error("Distribution %s not found", args[0])
+        sys.exit(1)
+
+    matcher = Matcher(distros, pivot)
+    matcher.stats()
+
+    # Packages we want to map
+    if len(args) > 1:
+        todo = args[1:]
+    else:
+        todo = pivot.all_packages()
+
+    # Perform the mapping
+    for pkg in todo:
+        m = matcher.match(pkg)
+        # TODO: print mapping
+
+    matcher.match_stats()
