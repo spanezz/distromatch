@@ -1,0 +1,22 @@
+To set it up:
+
+ foreach $DIST in debian fedora ...
+  1. mkdir dist-$DIST
+  2. Create a file dist-$DIST/binsrc containing, on each line:
+       binary-package-name source-file-name
+     with one line per binary package in the distribution.
+  3. Create a file dist-$DIST/files.gz containing, on each line:
+       binary-package-name file-pathname
+     with one line per file in each package in the distribution.
+
+To run it:
+
+ ./distromatch distname pkgname
+
+ Given package $pkgname in distribution $distname, shows all the matching
+ packages in other distributions.
+
+The first time it is run it will spend a lot of time filtering the file lists,
+saving the results in dist-*/interesting-files. It will also build the Xapian
+indices it needs for lookup.
+
