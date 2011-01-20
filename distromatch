@@ -5,9 +5,19 @@ import os, os.path
 import xapian
 import logging
 import re
+from gzip import GzipFile
 
 VERSION = "0.1"
 log = logging.getLogger(__name__)
+
+def read_filelist(src):
+    "Read a compressed package->file content list"
+    fd = GzipFile(src, "r")
+    for line in fd:
+        name, path = line.strip().split(None, 1)
+        name = name.lower()
+        yield name, path
+
 
 class Distro(object):
     "Package information from one distro"
@@ -23,19 +33,41 @@ class Distro(object):
     def all_packages(self):
         return set([x.lower().strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
 
+    def filter_filelist(self):
+        log.info("%s: filtering file list", self.name)
+        # Filter file lists keeping only:
+        #  .desktop file paths
+        #  pkg-config file paths
+
+        def do_filter():
+            for name, fname in read_filelist(os.path.join(self.root, "files.gz")):
+                if fname.endswith(".desktop"):
+                    yield name, 'desktop', os.path.basename(fname)
+
+        # Read dist content information
+        contents = dict()
+        out = open(os.path.join(self.root, "interesting-files"), "w")
+        for pkg, kind, fname in do_filter():
+            print >>out, pkg, kind, fname
+        out.close()
+
     def index(self):
         log.info("%s: indexing data", self.name)
         pkgs = self.all_packages()
         log.info("%s: %d packages", self.name, len(pkgs))
 
-        # Read desktop file information
+        if not os.path.exists(os.path.join(os.path.join(self.root, "interesting-files"))):
+            self.filter_filelist()
+
+        ## Read desktop file information
         pkg2desktop = dict()
         dfiles = 0
-        for line in open(os.path.join(self.root, "pkgdesktop")):
-            name, desktop = line.strip().lower().split(None, 1)
-            if desktop.startswith("fedora-"):
-                desktop = desktop[7:]
-            pkg2desktop.setdefault(name, []).append(desktop)
+        for line in open(os.path.join(self.root, "interesting-files")):
+            pkg, kind, fname = line.strip().lower().split(None, 2)
+            if kind != 'desktop': continue
+            if fname.startswith("fedora-"):
+                fname = fname[7:]
+            pkg2desktop.setdefault(pkg, []).append(fname)
             dfiles += 1
         log.info("%s: %d desktop files", self.name, dfiles)
 
@@ -46,9 +78,8 @@ class Distro(object):
         for name in pkgs:
             doc = xapian.Document()
             doc.set_data(name)
+            # Package name term
             doc.add_term("XP"+name)
-            for d in pkg2desktop.get(name, []):
-                doc.add_term("XD"+d)
 
             # Add stemmed forms of the package name
             for pfx, regex in self.stemmers.iteritems():
@@ -56,6 +87,10 @@ class Distro(object):
                 if mo:
                     doc.add_term(pfx+mo.group(1))
                     stem_stats[pfx] += 1
+
+            # Add package contents
+            for d in pkg2desktop.get(name, []):
+                doc.add_term("XD"+d)
 
             db.add_document(doc)
 
@@ -169,6 +204,10 @@ class Matcher(object):
         "Match stemmed form of development library package names"
         return self.match_bystemmer(name, 'ZDL')
 
+    def match_bystem_shlib(self, name):
+        "Match stemmed form of shared library package names"
+        return self.match_bystemmer(name, 'ZSL')
+
     def match(self, name):
         self.count_all += 1
         attempts = []
@@ -227,15 +266,19 @@ if __name__ == "__main__":
         parser.error("please provide a distribution name")
 
     distros = [
-        Distro("debian", reindex=opts.reindex, stemmers={
-            'ZDL': re.compile('^lib(.+?)-dev$'),
-            'ZSL': re.compile('^lib(.+?\d)$'),
-        }),
+        #Distro("debian", reindex=opts.reindex, stemmers={
+        #    'ZDL': re.compile('^lib(.+?)-dev$'),
+        #    'ZSL': re.compile('^lib(.+?\d)$'),
+        #}),
         Distro("fedora", reindex=opts.reindex, stemmers={
             'ZDL': re.compile('^(?:lib)?(.+?)-devel$'),
             'ZSL': re.compile('^(.+?)-libs$'),
         }),
         Distro("mandriva", reindex=opts.reindex, stemmers={
+            'ZDL': re.compile('^lib(?:64)?(.+?)-devel$'),
+            'ZSL': re.compile('^lib(?:64)?(.+?\d)$'),
+        }),
+        Distro("suse", reindex=opts.reindex, stemmers={
             'ZDL': re.compile('^lib(?:64)?(.+?)-devel$'),
             'ZSL': re.compile('^lib(?:64)?(.+?\d)$'),
         }),
