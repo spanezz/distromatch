@@ -228,10 +228,16 @@ if __name__ == "__main__":
 
     distros = [
         Distro("debian", reindex=opts.reindex, stemmers={
-            'ZDL': re.compile('lib(.+?)-dev')
+            'ZDL': re.compile('^lib(.+?)-dev$'),
+            'ZSL': re.compile('^lib(.+?\d)$'),
         }),
         Distro("fedora", reindex=opts.reindex, stemmers={
-            'ZDL': re.compile('(?:lib)?(.+?)-devel')
+            'ZDL': re.compile('^(?:lib)?(.+?)-devel$'),
+            'ZSL': re.compile('^(.+?)-libs$'),
+        }),
+        Distro("mandriva", reindex=opts.reindex, stemmers={
+            'ZDL': re.compile('^lib(?:64)?(.+?)-devel$'),
+            'ZSL': re.compile('^lib(?:64)?(.+?\d)$'),
         }),
     ]
 
