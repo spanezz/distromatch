@@ -10,6 +10,13 @@ from gzip import GzipFile
 VERSION = "0.1"
 log = logging.getLogger(__name__)
 
+class UserError(Exception):
+    """
+    Exception that does not cause a backtrace, but shows as an error message to
+    the user
+    """
+    pass
+
 def read_filelist(src):
     "Read a compressed package->file content list"
     fd = GzipFile(src, "r")
@@ -150,6 +157,8 @@ class Matcher(object):
 
         # Get the package info in the starting distro
         srcdoc = self.pivot.document_for(name)
+        if srcdoc is None:
+            raise UserError("Package %s not found" % name)
 
         # Get the .desktop file terms in the document
         desktops = []
@@ -209,6 +218,7 @@ class Matcher(object):
         return self.match_bystemmer(name, 'ZSL')
 
     def match(self, name):
+        "If some match is possible, return a dict(distro=set(names))"
         self.count_all += 1
         attempts = []
         for m in self.methods:
@@ -221,7 +231,11 @@ class Matcher(object):
                 print "Not matched:", name
             self.count_notmatched += 1
             return None
-        return True
+        res = dict()
+        for a in attempts:
+            for k, v in a.iteritems():
+                res.setdefault(k, set()).update(v)
+        return res
 
     def match_stats(self, out=sys.stderr):
         print >>out, "%d packages tested" % self.count_all
@@ -249,13 +263,13 @@ if __name__ == "__main__":
     parser = Parser(usage="usage: %prog [options] distro [name]",
                     version="%prog "+ VERSION,
                     description="Match package names across distros")
-    parser.add_option("--quiet", action="store_true", help="Verbose output")
+    parser.add_option("--verbose", action="store_true", help="Verbose output")
     parser.add_option("--debug", action="store_true", help="Debug output")
     parser.add_option("--reindex", action="store_true", help="Rebuild indices")
 
     (opts, args) = parser.parse_args()
 
-    if not opts.quiet and not opts.debug:
+    if opts.verbose and not opts.debug:
         logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     elif opts.debug:
         logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
@@ -266,10 +280,10 @@ if __name__ == "__main__":
         parser.error("please provide a distribution name")
 
     distros = [
-        #Distro("debian", reindex=opts.reindex, stemmers={
-        #    'ZDL': re.compile('^lib(.+?)-dev$'),
-        #    'ZSL': re.compile('^lib(.+?\d)$'),
-        #}),
+        Distro("debian", reindex=opts.reindex, stemmers={
+            'ZDL': re.compile('^lib(.+?)-dev$'),
+            'ZSL': re.compile('^lib(.+?\d)$'),
+        }),
         Distro("fedora", reindex=opts.reindex, stemmers={
             'ZDL': re.compile('^(?:lib)?(.+?)-devel$'),
             'ZSL': re.compile('^(.+?)-libs$'),
@@ -292,7 +306,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     matcher = Matcher(distros, pivot)
-    matcher.stats()
+    if opts.verbose or opts.debug:
+        matcher.stats()
 
     # Packages we want to map
     if len(args) > 1:
@@ -301,8 +316,19 @@ if __name__ == "__main__":
         todo = pivot.all_packages()
 
     # Perform the mapping
-    for pkg in todo:
-        m = matcher.match(pkg)
-        # TODO: print mapping
+    try:
+        dnames = [d.name for d in distros if d.name != args[0]]
+        for pkg in todo:
+            m = matcher.match(pkg)
+            if m is None: m = dict()
+            for d in dnames:
+                names = m.get(d, [])
+                print "%s:%s %s:%s" % (
+                        pivot.name, pkg,
+                        d, ",".join(sorted(names)))
 
-    matcher.match_stats()
+        if opts.verbose or opts.debug:
+            matcher.match_stats()
+    except UserError, e:
+        print >>sys.stderr, str(e)
+        sys.exit(1)
