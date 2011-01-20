@@ -21,7 +21,7 @@ class Distro(object):
         self.db = xapian.Database(self.dbpath)
 
     def all_packages(self):
-        return set([x.lower().strip() for x in open(os.path.join(self.root, "pkglist"))])
+        return set([x.lower().strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
 
     def index(self):
         log.info("%s: indexing data", self.name)
