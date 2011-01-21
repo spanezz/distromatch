@@ -8,51 +8,101 @@ import logging
 
 log = logging.getLogger(__name__)
 
+class REStemmer(object):
+    def __init__(self, regex):
+        self.re = re.compile(regex)
+    def stem(self, word):
+        mo = self.re.match(word)
+        if mo: return mo.group(1)
+        return None
+
+class CPANStemmer(object):
+    def __init__(self, regex):
+        self.re = re.compile(regex)
+    def cpan_norm(self, word):
+        return re.sub(r"[:-]+", "-", word.lower())
+    def stem(self, word):
+        mo = self.re.match(word)
+        if mo: return self.cpan_norm(mo.group(1))
+        return None
+
 # Stemming prefixes:
 # ZDL: development libraries
 # ZSL: shared libraries
+# ZPL: perl modules
 STEMMERS = {
         "debian": {
             'ZDL': [
-                     re.compile('^lib(.+?)-dev$'),
-                     re.compile('^lib(.+?)[.0-9-]*-dev$'),
+                     REStemmer('^lib(.+?)-dev$'),
+                     REStemmer('^lib(.+?)[.0-9-]*-dev$'),
                    ],
             'ZSL': [
-                     re.compile('^lib(.+?\d)$'),
-                     re.compile('^lib(.+?)[.0-9-]+$'),
+                     REStemmer('^lib(.+?\d)$'),
+                     REStemmer('^lib(.+?)[.0-9-]+$'),
                    ],
+            'ZPL': [ CPANStemmer('^lib(.+)-perl$'), ],
         },
         "fedora": {
             'ZDL': [
-                     re.compile('^(?:lib)?(.+?)-devel$'),
-                     re.compile('^(?:lib)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^(?:lib)?(.+?)-devel$'),
+                     REStemmer('^(?:lib)?(.+?)[.0-9-]*-devel$'),
                    ],
             'ZSL': [
-                     re.compile('^(.+?)-libs$'),
-                     re.compile('^(.+?)[.0-9-]*-libs$'),
+                     REStemmer('^(.+?)-libs$'),
+                     REStemmer('^(.+?)[.0-9-]*-libs$'),
                    ],
+            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
         },
         "mandriva": {
             'ZDL': [
-                     re.compile('^lib(?:64)?(.+?)-devel$'),
-                     re.compile('^lib(?:64)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^lib(?:64)?(.+?)-devel$'),
+                     REStemmer('^lib(?:64)?(.+?)[.0-9-]*-devel$'),
                    ],
             'ZSL': [
-                     re.compile('^lib(?:64)?(.+?\d)$'), 
-                     re.compile('^lib(?:64)?(.+?)[.0-9-]*?$'), 
+                     REStemmer('^lib(?:64)?(.+?\d)$'), 
+                     REStemmer('^lib(?:64)?(.+?)[.0-9-]*?$'), 
                    ],
+            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
         },
         "suse": {
             'ZDL': [
-                     re.compile('^(?:lib)?(.+?)-devel$'),
-                     re.compile('^(?:lib)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^(?:lib)?(.+?)-devel$'),
+                     REStemmer('^(?:lib)?(.+?)[.0-9-]*-devel$'),
                    ],
             'ZSL': [
-                     re.compile('^(.+?)-libs$'),
-                     re.compile('^(.+?)[.0-9-]*-libs$'),
+                     REStemmer('^(.+?)-libs$'),
+                     REStemmer('^(.+?)[.0-9-]*-libs$'),
                    ],
+            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
         },
 }
+
+class ContentMatch(object):
+    def __init__(self, pfx, regexp):
+        self.pfx = pfx
+        self.regexp = regexp
+
+    def match(self, fname):
+        mo = self.regexp.match(fname)
+        if mo: return mo.group(1)
+        return None
+
+# What we consider interesting in package contents lists
+CONTENT_INFO = {
+        # .desktop files
+        'desktop': ContentMatch('XFD', re.compile(r"^.+/(.+\.desktop)$")),
+        # executable commands
+        'bin': ContentMatch('XFB', re.compile(r"^(?:[./]*)usr/bin/(.+)$")),
+        # pkg-config metadata
+        'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
+        # shared library info
+        'shlib': ContentMatch('XFSL', re.compile(r"(?:[./]*)usr/lib/(.+)\.so\.\d.+$")),
+        # devel library info
+        'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)usr/lib/(.+)\.a$")),
+        # manpages
+        'man': ContentMatch('XMAN', re.compile(r"(?:[./]*)usr/share/man/(.+)$")),
+}
+
 
 class UserError(Exception):
     """
@@ -69,32 +119,8 @@ def read_filelist(src):
         name = name.lower()
         yield name, path
 
-class ContentMatch(object):
-    def __init__(self, pfx, regexp):
-        self.pfx = pfx
-        self.regexp = regexp
-
-    def match(self, fname):
-        mo = self.regexp.match(fname)
-        if mo: return mo.group(1)
-        return None
-
 class Distro(object):
     "Package information from one distro"
-
-    # What we consider interesting in package contents lists
-    CONTENT_INFO = {
-            # .desktop files
-            'desktop': ContentMatch('XFD', re.compile(r"^.+/(.+\.desktop)$")),
-            # executable commands
-            'bin': ContentMatch('XFB', re.compile(r"^(?:[./]*)usr/bin/(.+)$")),
-            # pkg-config metadata
-            'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
-            # shared library info
-            'shlib': ContentMatch('XFSL', re.compile(r"(?:[./]*)/usr/lib/(.+)\.so\.\d.+$")),
-            # devel library info
-            'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)/usr/lib/(.+)\.a$")),
-    }
 
     def __init__(self, name, reindex=False):
         self.name = name
@@ -107,14 +133,14 @@ class Distro(object):
 
     def all_packages(self):
         "Return the set of all binary packages in this distro"
-        return set([x.lower().strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
+        return set([x.strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
 
     def filter_filelist(self):
         "Trim file lists extracting only 'interesting' files"
         log.info("%s: filtering file list", self.name)
         def do_filter():
             for name, fname in read_filelist(os.path.join(self.root, "files.gz")):
-                for kind, matcher in self.CONTENT_INFO.iteritems():
+                for kind, matcher in CONTENT_INFO.iteritems():
                     m = matcher.match(fname)
                     if m:
                         yield name, kind, m
@@ -140,7 +166,8 @@ class Distro(object):
         contents = dict()
         contents_stats = dict()
         for line in open(os.path.join(self.root, "interesting-files")):
-            pkg, kind, fname = line.strip().lower().split(None, 2)
+            pkg, kind, fname = line.strip().split(None, 2)
+            fname = fname.lower()
             if kind == 'desktop' and fname.startswith("fedora-"):
                 fname = fname[7:]
             pkginfo = contents.setdefault(pkg, dict())
@@ -159,19 +186,20 @@ class Distro(object):
         for name in pkgs:
             doc = xapian.Document()
             doc.set_data(name)
+            lname = name.lower()
             # Package name term
-            doc.add_term("XP"+name)
+            doc.add_term("XP"+lname)
 
             # Add stemmed forms of the package name
             for pfx in self.stemmers:
-                for t in self.stem(name, pfx):
+                for t in self.stem(lname, pfx):
                     doc.add_term(pfx + t)
                     stem_stats[pfx] += 1
 
             # Add package contents
             pkginfo = contents.get(name, dict())
             for kind, fnames in pkginfo.iteritems():
-                pfx = self.CONTENT_INFO[kind].pfx
+                pfx = CONTENT_INFO[kind].pfx
                 for fn in fnames:
                     doc.add_term(pfx+fn)
 
@@ -190,13 +218,13 @@ class Distro(object):
             for t in self.db.allterms(v.pfx):
                 count += 1
             return count
-        info = [(k, count_pfx(v.pfx)) for k, v in self.CONTENT_INFO.iteritems()]
+        info = [(k, count_pfx(v.pfx)) for k, v in CONTENT_INFO.iteritems()]
         print >>out, "%s: %s files" % (self.name, ", ".join(["%d %s" % (c, n) for n, c in info]))
 
     def document_for(self, name):
         "Retrieve the Xapian document given the binary package name"
         enq = xapian.Enquire(self.db)
-        enq.set_query(xapian.Query("XP"+name))
+        enq.set_query(xapian.Query("XP"+name.lower()))
         mset = enq.get_mset(0, 1)
         for m in mset:
             return m.document
@@ -208,9 +236,9 @@ class Distro(object):
         prefix
         """
         res = set()
-        for regex in self.stemmers[pfx]:
-            mo = regex.match(name)
-            if mo: res.add(mo.group(1))
+        for stemmer in self.stemmers[pfx]:
+            stemmed = stemmer.stem(name)
+            if stemmed: res.add(stemmed)
         return res
 
 class Matcher(object):
@@ -221,9 +249,14 @@ class Matcher(object):
         self.count_all = 0
         self.count_matchcounts = dict([(x, 0) for x in range(len(self.distros)+1)])
         self.counts = dict()
-        self.methods = ["byname", "bydesktop", "bypc", "bybin", "byshlib", "bydevlib", "bystem_libdevel", "bystem_shlib"]
-        for m in self.methods:
-            self.counts[m] = 0
+        self.methods = []
+        for m in ["byname", "bydesktop", "bypc", "bystem_libdevel", "bystem_shlib", "bystem_perl"]:
+            self.methods.append((m, getattr(self, "match_"+m)))
+        self.fuzzy_methods = []
+        for m in ["bybin", "byshlib", "bydevlib", "byman"]:
+            self.fuzzy_methods.append((m, getattr(self, "match_"+m)))
+        for mname, meth in self.methods + self.fuzzy_methods:
+            self.counts[mname] = 0
 
     def stats(self, out=sys.stderr):
         "Print stats for all available distributions"
@@ -235,8 +268,9 @@ class Matcher(object):
         "Match packages by name"
         res = dict()
         for d in self.distros:
-            if d.db.get_termfreq('XP'+name) > 0:
-                res[d.name] = [name]
+            doc = d.document_for(name)
+            if doc is not None:
+                res[d.name] = [doc.get_data()]
         if not res: return None
         return res
 
@@ -247,7 +281,7 @@ class Matcher(object):
             raise UserError("Package %s not found" % name)
 
         # Get the file terms in the document
-        pfx = Distro.CONTENT_INFO[kind].pfx
+        pfx = CONTENT_INFO[kind].pfx
         files = []
         for t in srcdoc.termlist():
             if t.term.startswith(pfx):
@@ -296,6 +330,10 @@ class Matcher(object):
         "Match packages by devel library files contained within"
         return self.match_bycontents(name, 'devlib')
 
+    def match_byman(self, name):
+        "Match packages by man pages contained within"
+        return self.match_bycontents(name, 'man')
+
     def match_bystemmer(self, name, pfx):
         stemmed = self.pivot.stem(name, pfx)
         if not stemmed: return None
@@ -306,7 +344,7 @@ class Matcher(object):
         for d in self.distros:
             enq = xapian.Enquire(d.db)
             enq.set_query(xapian.Query(xapian.Query.OP_OR, term))
-            mset = enq.get_mset(0, 100)
+            mset = enq.get_mset(0, 10)
             names = []
             for m in mset:
                 names.append(m.document.get_data())
@@ -324,14 +362,26 @@ class Matcher(object):
         "Match stemmed form of shared library package names"
         return self.match_bystemmer(name, 'ZSL')
 
+    def match_bystem_perl(self, name):
+        "Match stemmed form of shared library package names"
+        return self.match_bystemmer(name, 'ZPL')
+
     def match(self, name):
         "If some match is possible, return a dict(distro=set(names))"
         self.count_all += 1
+        # Try with exact methods
         attempts = []
-        for m in self.methods:
-            res = getattr(self, "match_" + m)(name)
+        for mname, meth in self.methods:
+            res = meth(name)
             if res:
-                self.counts[m] += 1
+                self.counts[mname] += 1
+                attempts.append(res)
+        # Try with fuzzy methods
+        #attempts_fuzzy = []
+        for mname, meth in self.fuzzy_methods:
+            res = meth(name)
+            if res:
+                self.counts[mname] += 1
                 attempts.append(res)
         if not attempts:
             if 0:

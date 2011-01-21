@@ -15,6 +15,8 @@ class TestStemmer(unittest.TestCase):
         self.assertEqual(sorted(d.stem('libdebtags0.3-dev', 'ZDL')), ["debtags", "debtags0.3"])
         self.assertEqual(sorted(d.stem('libfoo2bar0-dev', 'ZDL')), ["foo2bar", "foo2bar0"])
 
+        self.assertEqual(sorted(d.stem('libfoo-bar-perl', 'ZPL')), ["foo-bar"]);
+
     def testFedora(self):
         d = dmatch.Distro("fedora")
         self.assertEqual(sorted(d.stem('debtags-libs', 'ZSL')), ["debtags"])
@@ -30,6 +32,8 @@ class TestStemmer(unittest.TestCase):
         self.assertEqual(sorted(d.stem('libdebtags0.3-devel', 'ZDL')), ["debtags", "debtags0.3"])
         self.assertEqual(sorted(d.stem('foo2bar0-devel', 'ZDL')), ["foo2bar", "foo2bar0"])
         self.assertEqual(sorted(d.stem('libfoo2bar0-devel', 'ZDL')), ["foo2bar", "foo2bar0"])
+
+        self.assertEqual(sorted(d.stem('perl-Foo-Bar', 'ZPL')), ["foo-bar"]);
 
     def testMandriva(self):
         d = dmatch.Distro("mandriva")
@@ -49,6 +53,8 @@ class TestStemmer(unittest.TestCase):
         self.assertEqual(sorted(d.stem('lib64debtags0.3-devel', 'ZDL')), ["debtags", "debtags0.3"])
         self.assertEqual(sorted(d.stem('lib64foo2bar0-devel', 'ZDL')), ["foo2bar", "foo2bar0"])
 
+        self.assertEqual(sorted(d.stem('perl-Foo-Bar', 'ZPL')), ["foo-bar"]);
+
     def testSuse(self):
         d = dmatch.Distro("suse")
         self.assertEqual(sorted(d.stem('debtags-libs', 'ZSL')), ["debtags"])
@@ -65,6 +71,7 @@ class TestStemmer(unittest.TestCase):
         self.assertEqual(sorted(d.stem('foo2bar0-devel', 'ZDL')), ["foo2bar", "foo2bar0"])
         self.assertEqual(sorted(d.stem('libfoo2bar0-devel', 'ZDL')), ["foo2bar", "foo2bar0"])
 
+        self.assertEqual(sorted(d.stem('perl-Foo-Bar', 'ZPL')), ["foo-bar"]);
 
 if __name__ == '__main__':
     unittest.main()
