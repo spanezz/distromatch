@@ -77,6 +77,6 @@ if __name__ == "__main__":
         # Print stats about the mapping, if requested
         if opts.stats:
             matcher.match_stats()
-    except UserError, e:
+    except dmatch.UserError, e:
         print >>sys.stderr, str(e)
         sys.exit(1)

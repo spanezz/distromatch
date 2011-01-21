@@ -8,6 +8,46 @@ import logging
 
 log = logging.getLogger(__name__)
 
+# Stemming prefixes:
+# ZDL: development libraries
+# ZSL: shared libraries
+STEMMERS = {
+        "debian": {
+            'ZDL': [
+                     re.compile('^lib(.+?)-dev$'),
+                     re.compile('^lib(.+?)\d(.+\d)*-dev$'),
+                   ],
+            'ZSL': [
+                     re.compile('^lib(.+?\d)$'),
+                     re.compile('^lib(.+?)\d(.+\d)*$'),
+                   ],
+        },
+        "fedora": {
+            'ZDL': [
+                     re.compile('^(?:lib)?(.+?)-devel$'),
+                     re.compile('^(?:lib)?(.+?)\d.+-devel$'),
+                   ],
+            'ZSL': [
+                     re.compile('^(.+?)-libs$'),
+                     re.compile('^(.+?)\d.+-libs$'),
+                   ],
+        },
+        "mandriva": {
+            'ZDL': [
+                     re.compile('^lib(?:64)?(.+?)-devel$'),
+                     re.compile('^lib(?:64)?(.+?)\d.+-devel$'),
+                   ],
+            'ZSL': [
+                     re.compile('^lib(?:64)?(.+?\d)$'), 
+                     re.compile('^lib(?:64)?(.+?)\d(.+\d)?$'), 
+                   ],
+        },
+        "suse": {
+            'ZDL': [ re.compile('^lib(?:64)?(.+?)-devel$'), ],
+            'ZSL': [ re.compile('^lib(?:64)?(.+?\d)$'), ],
+        },
+}
+
 class UserError(Exception):
     """
     Exception that does not cause a backtrace, but shows as an error message to
@@ -50,11 +90,11 @@ class Distro(object):
             'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)/usr/lib/(.+)\.a$")),
     }
 
-    def __init__(self, name, reindex=False, stemmers={}):
+    def __init__(self, name, reindex=False):
         self.name = name
         self.root = os.path.abspath("dist-" + name)
         self.dbpath = os.path.join(self.root, "db")
-        self.stemmers = stemmers
+        self.stemmers = STEMMERS[name]
         if reindex or not os.path.exists(self.dbpath):
             self.index()
         self.db = xapian.Database(self.dbpath)
@@ -117,12 +157,10 @@ class Distro(object):
             doc.add_term("XP"+name)
 
             # Add stemmed forms of the package name
-            for pfx, regex in self.stemmers.iteritems():
-                for r in regex:
-                    mo = r.match(name)
-                    if mo:
-                        doc.add_term(pfx+mo.group(1))
-                        stem_stats[pfx] += 1
+            for pfx in self.stemmers:
+                for t in self.stem(name, pfx):
+                    doc.add_term(pfx + t)
+                    stem_stats[pfx] += 1
 
             # Add package contents
             pkginfo = contents.get(name, dict())
@@ -163,10 +201,11 @@ class Distro(object):
         'stem' a package name according to the rules associated with the given
         prefix
         """
-        regex = self.stemmers[pfx]
-        mo = regex[0].match(name)
-        if mo: return mo.group(1)
-        return None
+        res = set()
+        for regex in self.stemmers[pfx]:
+            mo = regex.match(name)
+            if mo: res.add(mo.group(1))
+        return res
 
 class Matcher(object):
     "Match packages across distros"
@@ -254,7 +293,7 @@ class Matcher(object):
     def match_bystemmer(self, name, pfx):
         stemmed = self.pivot.stem(name, pfx)
         if not stemmed: return None
-        term = pfx + stemmed
+        term = [pfx + s for s in stemmed]
 
         # Query the stemmed form in each distro
         res = dict()
@@ -314,39 +353,9 @@ class Distros(object):
     def __init__(self, reindex=False):
         # Definition of all the distros we know
         self.distros = [
-            Distro("debian", reindex=reindex, stemmers={
-                'ZDL': [
-                         re.compile('^lib(.+?)-dev$'),
-                         re.compile('^lib(.+?)\d.+-dev$'),
-                       ],
-                'ZSL': [
-                         re.compile('^lib(.+?\d)$'),
-                         re.compile('^lib(.+?)\d(.+\d)*$'),
-                       ],
-            }),
-            Distro("fedora", reindex=reindex, stemmers={
-                'ZDL': [
-                         re.compile('^(?:lib)?(.+?)-devel$'),
-                         re.compile('^(?:lib)?(.+?)\d.+-devel$'),
-                       ],
-                'ZSL': [
-                         re.compile('^(.+?)-libs$'),
-                         re.compile('^(.+?)\d.+-libs$'),
-                       ],
-            }),
-            Distro("mandriva", reindex=reindex, stemmers={
-                'ZDL': [
-                         re.compile('^lib(?:64)?(.+?)-devel$'),
-                         re.compile('^lib(?:64)?(.+?)\d.+-devel$'),
-                       ],
-                'ZSL': [
-                         re.compile('^lib(?:64)?(.+?\d)$'), 
-                         re.compile('^lib(?:64)?(.+?)\d(.+\d)?$'), 
-                       ],
-            }),
-            Distro("suse", reindex=reindex, stemmers={
-                'ZDL': [ re.compile('^lib(?:64)?(.+?)-devel$'), ],
-                'ZSL': [ re.compile('^lib(?:64)?(.+?\d)$'), ],
-            }),
+            Distro("debian", reindex=reindex),
+            Distro("fedora", reindex=reindex),
+            Distro("mandriva", reindex=reindex),
+            Distro("suse", reindex=reindex),
         ]
         self.distro_map = dict([(x.name, x) for x in self.distros])
