@@ -25,9 +25,29 @@ def read_filelist(src):
         name = name.lower()
         yield name, path
 
+class ContentMatch(object):
+    def __init__(self, pfx, regexp):
+        self.pfx = pfx
+        self.regexp = regexp
+
+    def match(self, fname):
+        mo = self.regexp.match(fname)
+        if mo: return mo.group(1)
+        return None
 
 class Distro(object):
     "Package information from one distro"
+
+    # What we consider interesting in package contents lists
+    CONTENT_INFO = {
+            # .desktop files
+            'desktop': ContentMatch('XFD', re.compile(r"^.+/(.+\.desktop)$")),
+            # executable commands
+            'bin': ContentMatch('XFB', re.compile(r"^(?:[./]*)usr/bin/(.+)$")),
+            # pkg-config metadata
+            'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
+    }
+
     def __init__(self, name, reindex=False, stemmers={}):
         self.name = name
         self.root = os.path.abspath("dist-" + name)
@@ -38,18 +58,19 @@ class Distro(object):
         self.db = xapian.Database(self.dbpath)
 
     def all_packages(self):
+        "Return the set of all binary packages in this distro"
         return set([x.lower().strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
 
     def filter_filelist(self):
+        "Trim file lists extracting only 'interesting' files"
         log.info("%s: filtering file list", self.name)
-        # Filter file lists keeping only:
-        #  .desktop file paths
-        #  pkg-config file paths
-
         def do_filter():
             for name, fname in read_filelist(os.path.join(self.root, "files.gz")):
-                if fname.endswith(".desktop"):
-                    yield name, 'desktop', os.path.basename(fname)
+                for kind, matcher in self.CONTENT_INFO.iteritems():
+                    m = matcher.match(fname)
+                    if m:
+                        yield name, kind, m
+                        break
 
         # Read dist content information
         contents = dict()
@@ -59,6 +80,7 @@ class Distro(object):
         out.close()
 
     def index(self):
+        "Rebuild the Xapian index for this distro"
         log.info("%s: indexing data", self.name)
         pkgs = self.all_packages()
         log.info("%s: %d packages", self.name, len(pkgs))
@@ -66,17 +88,21 @@ class Distro(object):
         if not os.path.exists(os.path.join(os.path.join(self.root, "interesting-files"))):
             self.filter_filelist()
 
-        ## Read desktop file information
-        pkg2desktop = dict()
-        dfiles = 0
+        # Read package contents information
+        contents = dict()
+        contents_stats = dict()
         for line in open(os.path.join(self.root, "interesting-files")):
             pkg, kind, fname = line.strip().lower().split(None, 2)
-            if kind != 'desktop': continue
-            if fname.startswith("fedora-"):
+            if kind == 'desktop' and fname.startswith("fedora-"):
                 fname = fname[7:]
-            pkg2desktop.setdefault(pkg, []).append(fname)
-            dfiles += 1
-        log.info("%s: %d desktop files", self.name, dfiles)
+            pkginfo = contents.setdefault(pkg, dict())
+            pkginfo.setdefault(kind, set()).add(fname)
+            if kind in contents_stats:
+                contents_stats[kind] += 1
+            else:
+                contents_stats[kind] = 1
+        for k, v in contents_stats.iteritems():
+            log.info("%s: %d %s files", self.name, v, k)
 
         # Create a new database
         db = xapian.WritableDatabase(self.dbpath, xapian.DB_CREATE_OR_OVERWRITE)
@@ -96,8 +122,11 @@ class Distro(object):
                     stem_stats[pfx] += 1
 
             # Add package contents
-            for d in pkg2desktop.get(name, []):
-                doc.add_term("XD"+d)
+            pkginfo = contents.get(name, dict())
+            for kind, fnames in pkginfo.iteritems():
+                pfx = self.CONTENT_INFO[kind].pfx
+                for fn in fnames:
+                    doc.add_term(pfx+fn)
 
             db.add_document(doc)
 
@@ -107,12 +136,16 @@ class Distro(object):
         db.flush()
 
     def stats(self, out=sys.stderr):
-        dfiles = 0
-        for t in self.db.allterms("XD"):
-            dfiles += 1
-        print >>out, "%s: %d packages, %d desktop files" % (self.name, len(self.all_packages()), dfiles)
+        "Print stats about the contents of this distro"
+        print >>out, "%s: %d packages" % (self.name, len(self.all_packages()))
+        for k, v in self.CONTENT_INFO.iteritems():
+            count = 0
+            for t in self.db.allterms(v.pfx):
+                count += 1
+            print >>out, "%s: %d %s files" % (self.name, count, k)
 
     def document_for(self, name):
+        "Retrieve the Xapian document given the binary package name"
         enq = xapian.Enquire(self.db)
         enq.set_query(xapian.Query("XP"+name))
         mset = enq.get_mset(0, 1)
@@ -121,6 +154,10 @@ class Distro(object):
         return None
 
     def stem(self, name, pfx):
+        """
+        'stem' a package name according to the rules associated with the given
+        prefix
+        """
         regex = self.stemmers[pfx]
         mo = regex.match(name)
         if mo: return mo.group(1)
@@ -134,11 +171,12 @@ class Matcher(object):
         self.count_all = 0
         self.count_notmatched = 0
         self.counts = dict()
-        self.methods = ["byname", "bydesktop", "bystem_libdevel"]
+        self.methods = ["byname", "bydesktop", "bypc", "bybin", "bystem_libdevel"]
         for m in self.methods:
             self.counts[m] = 0
 
     def stats(self, out=sys.stderr):
+        "Print stats for all available distributions"
         self.pivot.stats(out)
         for d in self.distros:
             d.stats(out)
@@ -152,25 +190,24 @@ class Matcher(object):
         if not res: return None
         return res
 
-    def match_bydesktop(self, name):
-        "Match packages by desktop files contained within"
-
+    def match_bycontents(self, name, kind):
         # Get the package info in the starting distro
         srcdoc = self.pivot.document_for(name)
         if srcdoc is None:
             raise UserError("Package %s not found" % name)
 
-        # Get the .desktop file terms in the document
-        desktops = []
+        # Get the file terms in the document
+        pfx = Distro.CONTENT_INFO[kind].pfx
+        files = []
         for t in srcdoc.termlist():
-            if t.term.startswith("XD"):
-                desktops.append(t.term)
+            if t.term.startswith(pfx):
+                files.append(t.term)
 
-        # Query each distro for what packages have those desktop files
+        # Query each distro for what packages have those files
         res = dict()
         for d in self.distros:
             enq = xapian.Enquire(d.db)
-            enq.set_query(xapian.Query(xapian.Query.OP_OR, desktops))
+            enq.set_query(xapian.Query(xapian.Query.OP_OR, files))
             mset = enq.get_mset(0, 100)
             names = []
             for m in mset:
@@ -184,10 +221,22 @@ class Matcher(object):
             if len(res) != len(self.distros):
                 for d in desktops:
                     distros = [x.name for x in self.distros if d in x.desktop2pkg]
-                    print "Desktop file", d, "is only found in:", ",".join(distros)
+                    print kind, "file", d, "is only found in:", ",".join(distros)
 
         if not res: return None
         return res
+
+    def match_bydesktop(self, name):
+        "Match packages by desktop files contained within"
+        return self.match_bycontents(name, 'desktop')
+
+    def match_bypc(self, name):
+        "Match packages by pkg-config metadata files contained within"
+        return self.match_bycontents(name, 'pc')
+
+    def match_bybin(self, name):
+        "Match packages by executable files contained within"
+        return self.match_bycontents(name, 'bin')
 
     def match_bystemmer(self, name, pfx):
         stemmed = self.pivot.stem(name, pfx)
@@ -238,13 +287,13 @@ class Matcher(object):
         return res
 
     def match_stats(self, out=sys.stderr):
+        "Print statistics about the matching operations so far"
         print >>out, "%d packages tested" % self.count_all
         print >>out, "Founds by method:"
         for m in self.methods:
             doc = getattr(self, "match_" + m).__doc__
             print >>out, "%d matched by %s" % (self.counts[m], doc)
         print >>out, "%d not matched" % self.count_notmatched
-
 
 
 if __name__ == "__main__":
@@ -280,6 +329,7 @@ if __name__ == "__main__":
     if not args:
         parser.error("please provide a distribution name")
 
+    # Definition of all the distros we know
     distros = [
         Distro("debian", reindex=opts.reindex, stemmers={
             'ZDL': re.compile('^lib(.+?)-dev$'),
@@ -301,23 +351,25 @@ if __name__ == "__main__":
 
     distro_map = dict([(x.name, x) for x in distros])
 
+    # Pick the start distribution
     pivot = distro_map.get(args[0], None)
     if pivot is None:
         log.error("Distribution %s not found", args[0])
         sys.exit(1)
 
+    # Instantiate the matcher engine
     matcher = Matcher(distros, pivot)
     if opts.verbose or opts.debug:
         matcher.stats()
 
-    # Packages we want to map
+    # List the packages we want to map
     if len(args) > 1:
         todo = args[1:]
     else:
         todo = pivot.all_packages()
 
-    # Perform the mapping
     try:
+        # Perform the mapping
         dnames = [d.name for d in distros if d.name != args[0]]
         for pkg in todo:
             m = matcher.match(pkg)
@@ -329,6 +381,7 @@ if __name__ == "__main__":
                         pivot.name, pkg,
                         d, ",".join(sorted(names)))
 
+        # Print stats about the mapping, if requested
         if opts.stats:
             matcher.match_stats()
     except UserError, e:
