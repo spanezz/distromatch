@@ -1,0 +1,37 @@
+#!/usr/bin/python
+
+import sys
+import os, os.path
+import logging
+import re
+import dmatch
+from debian import debtags
+
+# Read debtags database
+debtags_db = debtags.DB()
+tag_filter = re.compile(r"^special::.+$|^.+::TODO$")
+debtags_db.read(open("/var/lib/debtags/package-tags", "r"), lambda x: not tag_filter.match(x))
+
+target = sys.argv[1]
+
+distros = dmatch.Distros()
+
+# Pick the start distribution
+pivot = distros.distro_map.get("debian", None)
+if pivot is None:
+    log.error("Distribution %s not found", "debian")
+    sys.exit(1)
+
+# Instantiate the matcher engine
+matcher = dmatch.Matcher(distros.distros, pivot)
+
+for pkg, tags in debtags_db.iter_packages_tags():
+    try:
+        # Perform the mapping
+        m = matcher.match(pkg)
+        if not m: continue
+        for name in m.get(target, []):
+            print "%s: %s" % (pkg, ", ".join(sorted(tags)))
+    except dmatch.UserError, e:
+        print >>sys.stderr, str(e)
+
