@@ -30,50 +30,55 @@ class CPANStemmer(object):
 # ZDL: development libraries
 # ZSL: shared libraries
 # ZPL: perl modules
+# ZPY: python modules
 STEMMERS = {
         "debian": {
             'ZDL': [
                      REStemmer('^lib(.+?)-dev$'),
-                     REStemmer('^lib(.+?)[.0-9-]*-dev$'),
+                     REStemmer('^lib(.+?)[.0-9_-]*-dev$'),
                    ],
             'ZSL': [
                      REStemmer('^lib(.+?\d)$'),
-                     REStemmer('^lib(.+?)[.0-9-]+$'),
+                     REStemmer('^lib(.+?)[.0-9_-]+$'),
                    ],
             'ZPL': [ CPANStemmer('^lib(.+)-perl$'), ],
+            'ZPY': [ REStemmer('^python-(.+)$'), ],
         },
         "fedora": {
             'ZDL': [
                      REStemmer('^(?:lib)?(.+?)-devel$'),
-                     REStemmer('^(?:lib)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^(?:lib)?(.+?)[.0-9_-]*-devel$'),
                    ],
             'ZSL': [
                      REStemmer('^(.+?)-libs$'),
-                     REStemmer('^(.+?)[.0-9-]*-libs$'),
+                     REStemmer('^(.+?)[.0-9_-]*-libs$'),
                    ],
             'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
+            'ZPY': [ REStemmer('^(.+)-python\d?$'), ],
         },
         "mandriva": {
             'ZDL': [
                      REStemmer('^lib(?:64)?(.+?)-devel$'),
-                     REStemmer('^lib(?:64)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^lib(?:64)?(.+?)[.0-9_-]*-devel$'),
                    ],
             'ZSL': [
                      REStemmer('^lib(?:64)?(.+?\d)$'), 
-                     REStemmer('^lib(?:64)?(.+?)[.0-9-]*?$'), 
+                     REStemmer('^lib(?:64)?(.+?)[.0-9_-]*?$'), 
                    ],
             'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
+            'ZPY': [ REStemmer('^python-(.+)$'), ],
         },
         "suse": {
             'ZDL': [
                      REStemmer('^(?:lib)?(.+?)-devel$'),
-                     REStemmer('^(?:lib)?(.+?)[.0-9-]*-devel$'),
+                     REStemmer('^(?:lib)?(.+?)[.0-9_-]*-devel$'),
                    ],
             'ZSL': [
                      REStemmer('^(.+?)-libs$'),
-                     REStemmer('^(.+?)[.0-9-]*-libs$'),
+                     REStemmer('^(.+?)[.0-9_-]*-libs$'),
                    ],
             'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
+            'ZPY': [ REStemmer('^python-(.+)$'), ],
         },
 }
 
@@ -250,7 +255,7 @@ class Matcher(object):
         self.count_matchcounts = dict([(x, 0) for x in range(len(self.distros)+1)])
         self.counts = dict()
         self.methods = []
-        for m in ["byname", "bydesktop", "bypc", "bystem_libdevel", "bystem_shlib", "bystem_perl"]:
+        for m in ["byname", "bydesktop", "bypc", "bystem_libdevel", "bystem_shlib", "bystem_perl", "bystem_python"]:
             self.methods.append((m, getattr(self, "match_"+m)))
         self.fuzzy_methods = []
         for m in ["bybin", "byshlib", "bydevlib", "byman"]:
@@ -363,8 +368,12 @@ class Matcher(object):
         return self.match_bystemmer(name, 'ZSL')
 
     def match_bystem_perl(self, name):
-        "Match stemmed form of shared library package names"
+        "Match stemmed form of perl library package names"
         return self.match_bystemmer(name, 'ZPL')
+
+    def match_bystem_python(self, name):
+        "Match stemmed form of python library package names"
+        return self.match_bystemmer(name, 'ZPY')
 
     def match(self, name):
         "If some match is possible, return a dict(distro=set(names))"
@@ -399,7 +408,7 @@ class Matcher(object):
         "Print statistics about the matching operations so far"
         print >>out, "%d packages tested" % self.count_all
         print >>out, "Founds by method:"
-        for m in self.methods:
+        for m, meth in self.methods:
             doc = getattr(self, "match_" + m).__doc__
             print >>out, "%d matched by %s" % (self.counts[m], doc)
         for i in range(len(self.distros)+1):
