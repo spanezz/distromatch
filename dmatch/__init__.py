@@ -19,7 +19,7 @@ STEMMERS = {
                    ],
             'ZSL': [
                      re.compile('^lib(.+?\d)$'),
-                     re.compile('^lib(.+?)[.0-9-]*$'),
+                     re.compile('^lib(.+?)[.0-9-]+$'),
                    ],
         },
         "fedora": {
@@ -35,16 +35,22 @@ STEMMERS = {
         "mandriva": {
             'ZDL': [
                      re.compile('^lib(?:64)?(.+?)-devel$'),
-                     re.compile('^lib(?:64)?(.+?)\d.+-devel$'),
+                     re.compile('^lib(?:64)?(.+?)[.0-9-]*-devel$'),
                    ],
             'ZSL': [
                      re.compile('^lib(?:64)?(.+?\d)$'), 
-                     re.compile('^lib(?:64)?(.+?)\d(.+\d)?$'), 
+                     re.compile('^lib(?:64)?(.+?)[.0-9-]*?$'), 
                    ],
         },
         "suse": {
-            'ZDL': [ re.compile('^lib(?:64)?(.+?)-devel$'), ],
-            'ZSL': [ re.compile('^lib(?:64)?(.+?\d)$'), ],
+            'ZDL': [
+                     re.compile('^(?:lib)?(.+?)-devel$'),
+                     re.compile('^(?:lib)?(.+?)[.0-9-]*-devel$'),
+                   ],
+            'ZSL': [
+                     re.compile('^(.+?)-libs$'),
+                     re.compile('^(.+?)[.0-9-]*-libs$'),
+                   ],
         },
 }
 
@@ -299,7 +305,7 @@ class Matcher(object):
         res = dict()
         for d in self.distros:
             enq = xapian.Enquire(d.db)
-            enq.set_query(xapian.Query(term))
+            enq.set_query(xapian.Query(xapian.Query.OP_OR, term))
             mset = enq.get_mset(0, 100)
             names = []
             for m in mset:
@@ -359,3 +365,13 @@ class Distros(object):
             Distro("suse", reindex=reindex),
         ]
         self.distro_map = dict([(x.name, x) for x in self.distros])
+
+    def make_matcher(self, start):
+        # Pick the start distribution
+        pivot = self.distro_map.get(start, None)
+        if pivot is None:
+            log.error("Distribution %s not found", start)
+            return None
+
+        # Instantiate the matcher engine
+        return Matcher(self.distros, pivot)

@@ -39,19 +39,22 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
-    if not args:
+    if not args and not opts.reindex:
         parser.error("please provide a distribution name")
 
-    distros = dmatch.Distros()
+    distros = dmatch.Distros(reindex=opts.reindex)
 
-    # Pick the start distribution
-    pivot = distros.distro_map.get(args[0], None)
-    if pivot is None:
-        log.error("Distribution %s not found", args[0])
-        sys.exit(1)
+    if opts.reindex and not args:
+        for d in distros.distros:
+            d.stats()
+        sys.exit(0)
 
     # Instantiate the matcher engine
-    matcher = dmatch.Matcher(distros.distros, pivot)
+    matcher = distros.make_matcher(args[0])
+    if matcher is None:
+        print >>sys.stderr, "Cannot create matcher"
+        sys.exit(1)
+
     if opts.verbose or opts.debug or opts.stats:
         matcher.stats()
 
@@ -59,7 +62,7 @@ if __name__ == "__main__":
     if len(args) > 1:
         todo = args[1:]
     else:
-        todo = pivot.all_packages()
+        todo = matcher.pivot.all_packages()
 
     try:
         # Perform the mapping
@@ -71,7 +74,7 @@ if __name__ == "__main__":
             for d in dnames:
                 names = m.get(d, [])
                 print "%s:%s %s:%s" % (
-                        pivot.name, pkg,
+                        matcher.pivot.name, pkg,
                         d, ",".join(sorted(names)))
 
         # Print stats about the mapping, if requested
