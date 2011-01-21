@@ -15,21 +15,21 @@ STEMMERS = {
         "debian": {
             'ZDL': [
                      re.compile('^lib(.+?)-dev$'),
-                     re.compile('^lib(.+?)\d(.+\d)*-dev$'),
+                     re.compile('^lib(.+?)[.0-9-]*-dev$'),
                    ],
             'ZSL': [
                      re.compile('^lib(.+?\d)$'),
-                     re.compile('^lib(.+?)\d(.+\d)*$'),
+                     re.compile('^lib(.+?)[.0-9-]*$'),
                    ],
         },
         "fedora": {
             'ZDL': [
                      re.compile('^(?:lib)?(.+?)-devel$'),
-                     re.compile('^(?:lib)?(.+?)\d.+-devel$'),
+                     re.compile('^(?:lib)?(.+?)[.0-9-]*-devel$'),
                    ],
             'ZSL': [
                      re.compile('^(.+?)-libs$'),
-                     re.compile('^(.+?)\d.+-libs$'),
+                     re.compile('^(.+?)[.0-9-]*-libs$'),
                    ],
         },
         "mandriva": {
