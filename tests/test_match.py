@@ -14,5 +14,10 @@ class TestMatcherFromDebian(unittest.TestCase):
         self.assertEqual(sorted(res["mandriva"]), ["lib64gtkmm2.4-devel", "libgtkmm2.4-devel"])
         self.assertEqual(sorted(res["suse"]), ["gtkmm2-devel"])
 
+        res = self.matcher.match("libdigest-sha1-perl")
+        self.assertEqual(sorted(res["fedora"]), ["perl-Digest-SHA1"])
+        self.assertEqual(sorted(res["mandriva"]), ["perl-Digest-SHA1"])
+        self.assertEqual(sorted(res["suse"]), ["perl-Digest-SHA1"])
+
 if __name__ == '__main__':
     unittest.main()
