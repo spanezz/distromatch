@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# List of Debian contents files
+find /srv/ftp.debian.org/ftp/dists/ -name 'Contents-*.gz'
+
+# List of Ubuntu contents files
+for dist in natty maverick lucid karmic jaunty hardy dapper
+do
+	for arch in amd64 i386
+	do
+		echo http://ftp.ubuntu.com/ubuntu/dists/$dist/Contents-$arch.gz
+		for flav in backports proposed security updates
+		do
+			echo http://ftp.ubuntu.com/ubuntu/dists/$dist-$flav/Contents-$arch.gz
+		done
+	done
+done
