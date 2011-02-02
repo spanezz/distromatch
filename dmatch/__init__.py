@@ -42,7 +42,7 @@ STEMMERS = {
                      REStemmer('^lib(.+?)[.0-9_-]+$'),
                    ],
             'ZPL': [ CPANStemmer('^lib(.+)-perl$'), ],
-            'ZPY': [ REStemmer('^python-(.+)$'), ],
+            'ZPY': [ REStemmer('^python\d?-(.+)$'), ],
         },
         "fedora": {
             'ZDL': [
