@@ -26,13 +26,16 @@ __license__ = """
 import psycopg2
 import logging
 import sys
+import os
 
 log = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
-#logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    if os.isatty(sys.stdout)
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+        #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    else:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
     try:
         db = psycopg2.connect(host="localhost",port=5441,user="guest",database="udd")

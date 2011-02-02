@@ -124,9 +124,11 @@ def read_contents(fd):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-    #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
-    #logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    if os.isatty(sys.stdout)
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+        #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    else:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
     # Merged pkg->set(files) dist
     merged = set()
