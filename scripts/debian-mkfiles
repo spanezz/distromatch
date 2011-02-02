@@ -24,7 +24,6 @@ __license__ = """
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 """
 
-
 import sys, re, os
 import optparse
 from gzip import GzipFile
@@ -35,30 +34,20 @@ import email.utils
 import time
 import urllib
 import logging
+
+# FIXME: I hate messing with sys.path
+sys.path.append("..")
+import dmatch
+
 log = logging.getLogger(__name__)
 
 VERSION="0.1"
 CACHEDIR="cache"
 
-def parse_contents(fd):
-    "Generate pkg,file couples from a Debian Contents-$ARCH file"
-    for line in fd:
-        if line.startswith("FILE"): break
-    for line in fd:
-        line = line[:-1]
-        try:
-            file, pkg = line.rsplit(None, 1)
-            pkg = pkg.rsplit('/', 1)[1]
-        except:
-            continue
-        yield pkg, file
-
-def read_contents(url):
+def cached(url, processor):
     """
-    Read gzip-compressed debian Contents-$ARCH data from the given URL
-    and return its contents into a {binpkgname:set(files)} dict
-
-    Return the timestamp of @url
+    Run @processor on the contents of @url, caching the results and reusing the
+    cached results if the url contents have not changed
     """
     zfd = urllib.urlopen(url)
     # Get the file timestamp
@@ -84,20 +73,52 @@ def read_contents(url):
 
     # Open through gunzipper
     fd = GzipFile(mode="r", fileobj=StringIO(zfd.read()))
-    count = 0
-    tgt = {}
-    for pkg, name in parse_contents(fd):
-        tgt.setdefault(pkg, set()).add(name)
-        count += 1
-        if count % 100000 == 0:
-            log.info("%s:%dk paths read", url, count/1000)
+
+    # Run the processor
+    res = processor(fd)
 
     # Save in cache
     out = GzipFile(cachefile, mode="w")
-    pickle.dump(tgt, out, pickle.HIGHEST_PROTOCOL)
+    pickle.dump(res, out, pickle.HIGHEST_PROTOCOL)
     out.close()
     # Set file timestamp to ts
     os.utime(cachefile, (ts, ts))
+
+    # Return the results
+    return res
+
+
+def parse_contents(fd):
+    "Generate pkg,file couples from a Debian Contents-$ARCH file"
+    for line in fd:
+        if line.startswith("FILE"): break
+    for line in fd:
+        line = line[:-1]
+        try:
+            file, pkg = line.rsplit(None, 1)
+            pkg = pkg.rsplit('/', 1)[1]
+        except:
+            continue
+        yield pkg, file
+
+def read_contents(fd):
+    """
+    Read Contents-$ARCH data from the given file descriptor
+    and return its contents into a set((binpkgname, kind, path))
+    """
+    count_read = 0
+    count_matched = 0
+    tgt = set()
+    for pkg, fname in parse_contents(fd):
+        # Select content
+        for kind, matcher in dmatch.CONTENT_INFO.iteritems():
+            m = matcher.match(fname)
+            if m:
+                tgt.add((pkg, kind, m))
+                count_matched += 1
+        count_read += 1
+        if count_read % 100000 == 0:
+            log.info("%s:%dk paths read, %d paths matched", url, count_read/1000, count_matched)
 
     return tgt
 
@@ -108,15 +129,13 @@ if __name__ == "__main__":
     #logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
     # Merged pkg->set(files) dist
-    pkgs = dict()
+    merged = set()
 
     # Read and merge all info
     for url in sys.argv[1:]:
-        info = read_contents(url)
-        for k, v in info.iteritems():
-            pkgs.setdefault(k, set()).update(v)
+        info = cached(url, read_contents)
+        merged.update(info)
 
     # Print the merged lists
-    for k, v in pkgs.iteritems():
-        for f in sorted(v):
-            print k, f
+    for pkg, kind, path in sorted(merged):
+        print pkg, kind, path
