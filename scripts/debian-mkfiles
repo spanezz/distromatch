@@ -1,0 +1,122 @@
+#!/usr/bin/python
+
+# Output a (binary, pathname) file mapping for the whole Debian ecosystem
+# known to this script (currently Debian and Ubuntu), suitable for use in
+# distromatch
+# See: http://www.enricozini.org/2011/debian/distromatch/
+
+__author__ = "Enrico Zini <enrico@debian.org>"
+__license__ = """
+    Copyright (C) 2011 Enrico Zini <enrico@debian.org>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+"""
+
+
+import sys, re, os
+import optparse
+from gzip import GzipFile
+import cPickle as pickle
+from cStringIO import StringIO
+import datetime as dt
+import email.utils
+import time
+import urllib
+import logging
+log = logging.getLogger(__name__)
+
+VERSION="0.1"
+CACHEDIR="cache"
+
+def parse_contents(fd):
+    "Generate pkg,file couples from a Debian Contents-$ARCH file"
+    for line in fd:
+        if line.startswith("FILE"): break
+    for line in fd:
+        line = line[:-1]
+        try:
+            file, pkg = line.rsplit(None, 1)
+            pkg = pkg.rsplit('/', 1)[1]
+        except:
+            continue
+        yield pkg, file
+
+def read_contents(url):
+    """
+    Read gzip-compressed debian Contents-$ARCH data from the given URL
+    and return its contents into a {binpkgname:set(files)} dict
+
+    Return the timestamp of @url
+    """
+    zfd = urllib.urlopen(url)
+    # Get the file timestamp
+    # FIXME: timezone conversion may happen here, since parsedate documentation
+    # doesn't mention timezones, mktime expects a local time, and time
+    # handling across the whole python stdlib is a crime against humanity
+    ts = time.mktime(email.utils.parsedate(zfd.info()["Last-modified"]))
+
+    # Check if we have the data in cache
+    name = re.sub(r"[^a-zA-Z0-9_.-]", "_", url)
+    cachefile = os.path.join(CACHEDIR, name)
+    try:
+        cachefile_ts = os.path.getmtime(cachefile)
+    except Exception, e:
+        cachefile_ts = 0
+    if cachefile_ts >= ts:
+        # Read from cache
+        log.info("%s: read from cache", url)
+        return pickle.load(GzipFile(cachefile, "r"))
+
+    # Not found in cache: read the real data
+    log.info("%s: recompute", url)
+
+    # Open through gunzipper
+    fd = GzipFile(mode="r", fileobj=StringIO(zfd.read()))
+    count = 0
+    tgt = {}
+    for pkg, name in parse_contents(fd):
+        tgt.setdefault(pkg, set()).add(name)
+        count += 1
+        if count % 100000 == 0:
+            log.info("%s:%dk paths read", url, count/1000)
+
+    # Save in cache
+    out = GzipFile(cachefile, mode="w")
+    pickle.dump(tgt, out, pickle.HIGHEST_PROTOCOL)
+    out.close()
+    # Set file timestamp to ts
+    os.utime(cachefile, (ts, ts))
+
+    return tgt
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    #logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+
+    # Merged pkg->set(files) dist
+    pkgs = dict()
+
+    # Read and merge all info
+    for url in sys.argv[1:]:
+        info = read_contents(url)
+        for k, v in info.iteritems():
+            pkgs.setdefault(k, set()).update(v)
+
+    # Print the merged lists
+    for k, v in pkgs.iteritems():
+        for f in sorted(v):
+            print k, f
