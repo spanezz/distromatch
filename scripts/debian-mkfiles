@@ -72,6 +72,9 @@ def cached(url, processor):
     log.info("%s: recompute", url)
 
     # Open through gunzipper
+    # FIXME: see http://www.enricozini.org/2011/cazzeggio/python-gzip/
+    #        for why there is such a stupid thing as a StringIO(zfd.read())
+    #        here.
     fd = GzipFile(mode="r", fileobj=StringIO(zfd.read()))
 
     # Run the processor
