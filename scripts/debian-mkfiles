@@ -124,7 +124,7 @@ def read_contents(fd):
 
 
 if __name__ == "__main__":
-    if os.isatty(sys.stdout.fileno()):
+    if os.isatty(sys.stderr.fileno()):
         logging.basicConfig(level=logging.INFO, stream=sys.stderr)
         #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     else:
