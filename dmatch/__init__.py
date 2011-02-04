@@ -95,19 +95,19 @@ class ContentMatch(object):
 # What we consider interesting in package contents lists
 CONTENT_INFO = {
         # .desktop files
-        'desktop': ContentMatch('XFD', re.compile(r"^.+/(.+\.desktop)$")),
+        'desktop': ContentMatch('XFD', re.compile(r"^[./]*usr/share/applications/(.+\.desktop)$")),
         # executable commands
-        'bin': ContentMatch('XFB', re.compile(r"^(?:[./]*)usr/bin/(.+)$")),
+        'bin': ContentMatch('XFB', re.compile(r"^[./]*(?:usr/)bin/(.+)$")),
         # pkg-config metadata
         'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
         # shared library info
-        'shlib': ContentMatch('XFSL', re.compile(r"(?:[./]*)usr/lib\d*/(.+)\.so\.\d.+$")),
+        'shlib': ContentMatch('XFSL', re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+)\.so\.\d.*$")),
         # devel library info
-        'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)usr/lib\d*/(.+)\.a$")),
+        'devlib': ContentMatch('XFDL', re.compile(r"^[./]*usr/lib\d*/(.+)\.a$")),
         # manpages
-        'man': ContentMatch('XMAN', re.compile(r"(?:[./]*)usr/share/man/(.+)$")),
+        'man': ContentMatch('XMAN', re.compile(r"[./]*usr/share/man/(.+)$")),
         # python modules
-        'py': ContentMatch('XFPY', re.compile(r"(?:[./]*)usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$")),
+        'py': ContentMatch('XFPY', re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$")),
 }
 
 
