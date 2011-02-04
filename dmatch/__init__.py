@@ -101,11 +101,13 @@ CONTENT_INFO = {
         # pkg-config metadata
         'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
         # shared library info
-        'shlib': ContentMatch('XFSL', re.compile(r"(?:[./]*)usr/lib/(.+)\.so\.\d.+$")),
+        'shlib': ContentMatch('XFSL', re.compile(r"(?:[./]*)usr/lib\d*/(.+)\.so\.\d.+$")),
         # devel library info
-        'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)usr/lib/(.+)\.a$")),
+        'devlib': ContentMatch('XFDL', re.compile(r"(?:[./]*)usr/lib\d*/(.+)\.a$")),
         # manpages
         'man': ContentMatch('XMAN', re.compile(r"(?:[./]*)usr/share/man/(.+)$")),
+        # python modules
+        'py': ContentMatch('XFPY', re.compile(r"(?:[./]*)usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$")),
 }
 
 
@@ -258,7 +260,7 @@ class Matcher(object):
         for m in ["byname", "bydesktop", "bypc", "bystem_libdevel", "bystem_shlib", "bystem_perl", "bystem_python"]:
             self.methods.append((m, getattr(self, "match_"+m)))
         self.fuzzy_methods = []
-        for m in ["bybin", "byshlib", "bydevlib", "byman"]:
+        for m in ["bybin", "byshlib", "bydevlib", "byman", "bypymod"]:
             self.fuzzy_methods.append((m, getattr(self, "match_"+m)))
         for mname, meth in self.methods + self.fuzzy_methods:
             self.counts[mname] = 0
@@ -338,6 +340,10 @@ class Matcher(object):
     def match_byman(self, name):
         "Match packages by man pages contained within"
         return self.match_bycontents(name, 'man')
+
+    def match_bypymod(self, name):
+        "Match packages by python module files contained within"
+        return self.match_bycontents(name, 'py')
 
     def match_bystemmer(self, name, pfx):
         stemmed = self.pivot.stem(name, pfx)
