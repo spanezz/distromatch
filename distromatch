@@ -29,6 +29,7 @@ if __name__ == "__main__":
     parser.add_option("--debug", action="store_true", help="Debug output")
     parser.add_option("--reindex", action="store_true", help="Rebuild indices")
     parser.add_option("--stats", action="store_true", help="Print stats instead of matches")
+    parser.add_option("--dump", action="store_true", help="Dump available information about the given distribution/package")
 
     (opts, args) = parser.parse_args()
 
@@ -47,6 +48,18 @@ if __name__ == "__main__":
     if opts.reindex and not args:
         for d in distros.distros:
             d.stats()
+        sys.exit(0)
+
+    # Dump information
+    if opts.dump:
+        dist = distros.distro_map[args[0]]
+        if len(args) > 1:
+            todo = args[1:]
+        else:
+            todo = dist.all_packages()
+        todo.sort()
+        for name in todo:
+            dist.dump_info(name, sys.stdout)
         sys.exit(0)
 
     # Instantiate the matcher engine

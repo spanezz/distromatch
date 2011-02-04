@@ -248,6 +248,15 @@ class Distro(object):
             if stemmed: res.add(stemmed)
         return res
 
+    def dump_info(self, name, out):
+        """
+        Dump all available information about the given package
+        """
+        doc = self.document_for(name)
+        for t in doc.termlist():
+            print >>out, t.term
+
+
 class Matcher(object):
     "Match packages across distros"
     def __init__(self, distros, pivot):
