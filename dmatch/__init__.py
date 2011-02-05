@@ -308,7 +308,7 @@ class Matcher(object):
         for d in self.distros:
             enq = xapian.Enquire(d.db)
             enq.set_query(xapian.Query(xapian.Query.OP_OR, files))
-            mset = enq.get_mset(0, 10)
+            mset = enq.get_mset(0, 20)
             names = []
             for m in mset:
                 names.append(m.document.get_data())
