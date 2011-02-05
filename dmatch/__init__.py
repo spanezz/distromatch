@@ -105,11 +105,25 @@ CONTENT_INFO = {
         # devel library info
         'devlib': ContentMatch('XFDL', re.compile(r"^[./]*usr/lib\d*/(.+)\.a$")),
         # manpages
-        'man': ContentMatch('XMAN', re.compile(r"[./]*usr/share/man/(.+)$")),
+        'man': ContentMatch('XFMAN', re.compile(r"[./]*usr/share/man/(.+)$")),
         # python modules
         'py': ContentMatch('XFPY', re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$")),
 }
 
+PREFIX_DOC = {
+    "XP": "package name",
+    "ZDL": "development library name",
+    "ZSL": "shared library name",
+    "ZPL": "perl module name",
+    "ZPY": "python module name",
+    "XFD": ".desktop file",
+    "XFB": "executable file",
+    "XFPC": "pkg-config file",
+    "XFSL": "shared library",
+    "XFDL": "development library",
+    "XFMAN": "man page",
+    "XFPY": "python module",
+}
 
 class UserError(Exception):
     """
@@ -252,9 +266,23 @@ class Distro(object):
         """
         Dump all available information about the given package
         """
+        re_pfx = re.compile("^([A-Z]+)(.+)$")
         doc = self.document_for(name)
+        groups = {}
         for t in doc.termlist():
-            print >>out, t.term
+            mo = re_pfx.match(t.term)
+            if mo:
+                groups.setdefault(mo.group(1), []).append(mo.group(2))
+            else:
+                groups.setdefault(None, []).append(t.term)
+        for group, terms in sorted(groups.iteritems(), key=lambda x:x[0]):
+            if group is None:
+                print >>out, "Other data:"
+            else:
+                title = PREFIX_DOC.get(group, group)
+                print >>out, "%s:" % title
+            for term in sorted(terms):
+                print >>out, "\t%s" % term
 
 
 class Matcher(object):
