@@ -30,6 +30,7 @@ if __name__ == "__main__":
     parser.add_option("--reindex", action="store_true", help="Rebuild indices")
     parser.add_option("--stats", action="store_true", help="Print stats instead of matches")
     parser.add_option("--dump", action="store_true", help="Dump available information about the given distribution/package")
+    parser.add_option("--list", action="store_true", help="List available distributions")
 
     (opts, args) = parser.parse_args()
 
@@ -40,10 +41,22 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
-    if not args and not opts.reindex:
+    if not args and not (opts.reindex or opts.list):
         parser.error("please provide a distribution name")
 
     distros = dmatch.Distros(reindex=opts.reindex)
+
+    # List distributions
+    if opts.list:
+        if len(args) == 0:
+            for d in distros.distro_map.values():
+                print "%s\tstyle: %s" % (d.name, d.style)
+        else:
+            for name in args:
+                d = distros.distro_map[name]
+                for pkg in d.all_packages():
+                    print pkg
+        sys.exit(0)
 
     if opts.reindex and not args:
         for d in distros.distros:
