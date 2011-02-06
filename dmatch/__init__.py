@@ -188,8 +188,7 @@ class Distro(object):
         contents_stats = dict()
         for line in open(os.path.join(self.root, "interesting-files")):
             pkg, kind, fname = line.strip().split(None, 2)
-            fname = fname.lower()
-            if kind == 'desktop' and fname.startswith("fedora-"):
+            if kind == 'desktop' and fname.lower().startswith("fedora-"):
                 fname = fname[7:]
             pkginfo = contents.setdefault(pkg, dict())
             pkginfo.setdefault(kind, set()).add(fname)

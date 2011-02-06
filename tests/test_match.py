@@ -44,8 +44,8 @@ class TestMatcherFromFedora(unittest.TestCase):
     def testLibs(self):
         res = self.matcher.match("glibc")
         self.assert_("libc6" in res["debian"])
-        self.assertEqual(sorted(res["mandriva"]), ["glibc"])
-        self.assertEqual(sorted(res["suse"]), ["gribc"])
+        self.assertEqual(sorted(res["mandriva"]), ["glibc", "ld.so1"])
+        self.assertEqual(sorted(res["suse"]), ["glibc"])
 
         res = self.matcher.match("openssl")
         self.assertEqual(sorted(res["debian"]), ["openssl"])
