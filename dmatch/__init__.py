@@ -143,11 +143,12 @@ def read_filelist(src):
 class Distro(object):
     "Package information from one distro"
 
-    def __init__(self, name, reindex=False, root="."):
+    def __init__(self, name, style=None, reindex=False, root="."):
         self.name = name
+        self.style = style
         self.root = os.path.abspath(os.path.join(root, "dist-" + name))
         self.dbpath = os.path.join(self.root, "db")
-        self.stemmers = STEMMERS[name]
+        self.stemmers = STEMMERS[self.style]
         if reindex or not os.path.exists(self.dbpath):
             self.index()
         self.db = xapian.Database(self.dbpath)
@@ -459,12 +460,20 @@ class Matcher(object):
 class Distros(object):
     def __init__(self, reindex=False, root="."):
         # Definition of all the distros we know
-        self.distros = [
-            Distro("debian", reindex=reindex, root=root),
-            Distro("fedora", reindex=reindex, root=root),
-            Distro("mandriva", reindex=reindex, root=root),
-            Distro("suse", reindex=reindex, root=root),
-        ]
+        self.distros = []
+        for d in os.listdir(root):
+            if not d.startswith("dist-"): continue
+            name = d[5:]
+            try:
+                style = open(os.path.join(root, d, "style")).read().strip()
+            except Exception, e:
+                if name in STEMMERS:
+                    log.info("cannot read style file in %s: %s. Defaulting to %s", d, str(e), name)
+                    style = name
+                else:
+                    log.warn("cannot read style file in %s: %s. Skipping data source", d, str(e))
+                    continue
+            self.distros.append(Distro(name, style=style, reindex=reindex, root=root))
         self.distro_map = dict([(x.name, x) for x in self.distros])
 
     def make_matcher(self, start):
