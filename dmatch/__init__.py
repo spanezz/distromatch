@@ -101,7 +101,7 @@ CONTENT_INFO = {
         # pkg-config metadata
         'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
         # shared library info
-        'shlib': ContentMatch('XFSL', re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+)\.so\.\d.*$")),
+        'shlib': ContentMatch('XFSL', re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$")),
         # devel library info
         'devlib': ContentMatch('XFDL', re.compile(r"^[./]*usr/lib\d*/(.+)\.a$")),
         # manpages

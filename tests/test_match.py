@@ -44,13 +44,15 @@ class TestMatcherFromFedora(unittest.TestCase):
     def testLibs(self):
         res = self.matcher.match("glibc")
         self.assert_("libc6" in res["debian"])
-        self.assertEqual(sorted(res["mandriva"]), ["glibc", "ld.so1"])
+        self.assertEqual(sorted(res["mandriva"]), ["glibc"])
         self.assertEqual(sorted(res["suse"]), ["glibc"])
 
+        # openssl in Fedora contains shared libraries, so it is correct to
+        # match several shlib packages on other distros
         res = self.matcher.match("openssl")
-        self.assertEqual(sorted(res["debian"]), ["openssl"])
-        self.assertEqual(sorted(res["mandriva"]), ["openssl"])
-        self.assertEqual(sorted(res["suse"]), ["openssl"])
+        self.assertEqual(sorted(res["debian"]), ['libssl1.0.0', "openssl"])
+        self.assertEqual(sorted(res["mandriva"]), ['lib64openssl1.0.0', 'libopenssl1.0.0', "openssl"])
+        self.assertEqual(sorted(res["suse"]), ['libopenssl1_0_0', 'openssl', 'openssl-doc'])
 
 if __name__ == '__main__':
     unittest.main()
