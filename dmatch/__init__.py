@@ -143,9 +143,9 @@ def read_filelist(src):
 class Distro(object):
     "Package information from one distro"
 
-    def __init__(self, name, reindex=False):
+    def __init__(self, name, reindex=False, root="."):
         self.name = name
-        self.root = os.path.abspath("dist-" + name)
+        self.root = os.path.abspath(os.path.join(root, "dist-" + name))
         self.dbpath = os.path.join(self.root, "db")
         self.stemmers = STEMMERS[name]
         if reindex or not os.path.exists(self.dbpath):
@@ -457,13 +457,13 @@ class Matcher(object):
             print >>out, "%d matched %d distro%s" % (self.count_matchcounts[i], i, 's' if i != 1 else '')
 
 class Distros(object):
-    def __init__(self, reindex=False):
+    def __init__(self, reindex=False, root="."):
         # Definition of all the distros we know
         self.distros = [
-            Distro("debian", reindex=reindex),
-            Distro("fedora", reindex=reindex),
-            Distro("mandriva", reindex=reindex),
-            Distro("suse", reindex=reindex),
+            Distro("debian", reindex=reindex, root=root),
+            Distro("fedora", reindex=reindex, root=root),
+            Distro("mandriva", reindex=reindex, root=root),
+            Distro("suse", reindex=reindex, root=root),
         ]
         self.distro_map = dict([(x.name, x) for x in self.distros])
 
