@@ -171,26 +171,41 @@ class Extractor(object):
         temp_table.execute(query)
         log.info("query-all-files:built directory shopping list in wanted_dirs")
 
+        # Precache the dir names so later we only transfer file names
+        dirlist = self.db.cursor("dirs")
+        dirlist.execute("SELECT dir_key, directory FROM wanted_dirs")
+        batch_size = max(dirlist.arraysize, 8192)
+        dirs = {}
+        while True:
+            rows = dirlist.fetchmany(batch_size)
+            if not rows: break
+            for key, path in rows:
+                dirs[key] = path
+        log.info("query-all-files:retrieved info about %d directories", len(dirs))
+        
+        # Get the file names and filter them
         query = """
-        SELECT f.pkgid, d.directory, f.basename
+        SELECT f.pkgid, f.dirnamekey, f.basename
           FROM binfiles f
-          JOIN wanted_dirs d on d.dir_key = f.dirnamekey;
+          JOIN wanted_dirs d ON f.dirnamekey = d.dir_key
         """
         c = self.db.cursor("files")
         c.execute(query)
-        batch_size = max(c.arraysize, 2048)
+        batch_size = max(c.arraysize, 8192)
         log.info("query-all-files:psycopg2 suggests batch size of %d; using %d", c.arraysize, batch_size)
         while True:
             rows = c.fetchmany(batch_size)
             if not rows: break
-            for pkgid, dirname, basename in rows:
+            for pkgid, dirid, basename in rows:
+                dirname = dirs.get(dirid, None)
+                if dirname is None: continue
                 fname = os.path.join(dirname, basename)
                 count_read += 1
                 for kind, matcher in rules.CONTENT_INFO.iteritems():
                     # Further filtering by regexp
                     m = matcher.match(fname)
                     if m:
-                        yield pkgid, kind, fname
+                        yield pkgid, kind, m
                         count_matched += 1
                 if count_read % 100000 == 0:
                     log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
