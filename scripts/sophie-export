@@ -41,8 +41,8 @@ class Extractor(object):
         try:
             # FIXME: temporary DB connection info
             #self.db = psycopg2.connect(host="localhost",port=5432,user="nobody",database="sophie")
-	    self.db = psycopg2.connect(host="sophie-db.latmos.ipsl.fr:5432",port=5432,user="nobody",database="sophie")
-        except exception, e:
+            self.db = psycopg2.connect(host="sophie-db.latmos.ipsl.fr:5432",port=5432,user="nobody",database="sophie")
+        except Exception, e:
             log.warn("cannot connect to sophie: %s", str(e))
             sys.exit(1)
 
@@ -64,7 +64,7 @@ class Extractor(object):
             srcname = sfn.rsplit("-", 2)[0]
             yield binname, srcname
             count += 1
-            if count % 1000 == 0:
+            if count % 10000 == 0:
                 log.info("%s:%dk bin<->src mappings read", tag, count / 1)
             #if count == 2000:
             #    log.info("debugging break")
