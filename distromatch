@@ -9,6 +9,13 @@ import dmatch
 VERSION = "0.1"
 log = logging.getLogger(__name__)
 
+class UserError(Exception):
+    """
+    Exception that does not cause a backtrace, but shows as an error message to
+    the user
+    """
+    pass
+
 if __name__ == "__main__":
     from optparse import OptionParser
 
@@ -40,6 +47,10 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     else:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+
+    if not dmatch.HAVE_ENGINE:
+        print >>sys.stderr, "Match engine not available: %s" % dmatch.MISSING_ENGINE_REASON
+        sys.exit(1)
 
     if not args and not (opts.reindex or opts.list):
         parser.error("please provide a distribution name")
@@ -94,6 +105,8 @@ if __name__ == "__main__":
         # Perform the mapping
         dnames = [d.name for d in distros.distros if d.name != args[0]]
         for pkg in todo:
+            if not matcher.pivot.has_package(pkg):
+                raise UserError("Package %s not found" % pkg)
             m = matcher.match(pkg)
             if opts.stats: continue
             if m is None: m = dict()
@@ -106,6 +119,6 @@ if __name__ == "__main__":
         # Print stats about the mapping, if requested
         if opts.stats:
             matcher.match_stats()
-    except dmatch.UserError, e:
+    except UserError, e:
         print >>sys.stderr, str(e)
         sys.exit(1)
