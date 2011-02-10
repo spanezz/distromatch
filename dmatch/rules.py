@@ -78,8 +78,8 @@ class ContentMatch(object):
     def __init__(self, pfx, regexp, sophie=None):
         self.pfx = pfx
         self.regexp = regexp
-        # SQL query to initiate a (pkgid, dirname, basename) data stream from
-        # Sophie
+        # SQL directory filter(s) (ORed togheter) to use when querying file
+        # names from Sophie
         self.sophie = sophie
 
     def match(self, fname):
@@ -92,72 +92,32 @@ CONTENT_INFO = {
         # .desktop files
         'desktop': ContentMatch('XFD',
             re.compile(r"^[./]*usr/share/applications/(.+\.desktop)$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE d.directory LIKE '/usr/share/applications/%'
-               AND f.basename LIKE '%.desktop'
-            """),
+            sophie=dict(like=["/usr/share/applications/%"])),
         # executable commands
-# TODO: sophie SQL queries hand-checked only until here
         'bin': ContentMatch('XFB',
             re.compile(r"^[./]*(?:usr/)bin/(.+)$"),
-            sophie="""
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE (d.directory = '/usr/bin/' OR d.directory = '/bin/')
-            """),
+            sophie=dict(eq=["/usr/bin/", "/bin/"])),
         # pkg-config metadata
         'pc': ContentMatch('XFPC',
             re.compile(r"^.+/pkgconfig/(.+)\.pc$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE d.directory LIKE '/usr/%/pkgconfig/'
-               AND f.basename LIKE '%.pc'
-            """),
+            sophie=dict(eq=["/usr/share/pkgconfig/", "/usr/lib/pkgconfig/", "/usr/lib32/pkgconfig/", "/usr/lib64/pkgconfig/"])),
         # shared library info
         'shlib': ContentMatch('XFSL',
             re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE (d.directory LIKE '/usr/lib%/' OR d.directory LIKE '/lib%/')
-               AND f.basename LIKE 'lib%.so.%'
-            """),
+            sophie=dict(eq=["/usr/lib/", "/usr/lib32/", "/usr/lib64/", "/lib/", "/lib32/", "/lib64/"])),
         # devel library info
         'devlib': ContentMatch('XFDL',
             re.compile(r"^[./]*usr/lib\d*/(.+)\.a$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE d.directory LIKE '/usr/lib%/'
-               AND f.basename LIKE 'lib%.a'
-            """),
+            sophie=dict(eq=["/usr/lib/", "/usr/lib64/"])),
+# TODO: sophie SQL queries hand-checked only until here
         # manpages
         'man': ContentMatch('XFMAN',
             re.compile(r"[./]*usr/share/man/(.+)$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE d.directory LIKE '/usr/share/man/%'
-            """),
+            sophie=dict(like=["/usr/share/man/%"])),
         # python modules
         'py': ContentMatch('XFPY',
             re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$"),
-            sophie = """
-            SELECT f.pkgid, d.directory, f.basename
-              FROM binfiles f
-              JOIN directories d on d.dir_key = f.dirnamekey
-             WHERE d.directory LIKE '/usr/%/python%/site-packages/%'
-               AND f.basename LIKE '%.py'
-            """),
+            sophie=dict(like=["/usr/%/python%/site-packages/%"])),
 }
 
 PREFIX_DOC = {
