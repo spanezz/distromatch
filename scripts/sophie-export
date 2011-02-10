@@ -63,7 +63,7 @@ class Extractor(object):
             srcname = sfn.rsplit("-", 2)[0]
             yield binname, srcname
             count += 1
-            if count % 1000 == 0:
+            if count % 10000 == 0:
                 log.info("%s:%dk bin<->src mappings read", tag, count / 1)
             #if count == 2000:
             #    log.info("debugging break")
