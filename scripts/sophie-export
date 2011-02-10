@@ -41,7 +41,7 @@ class Extractor(object):
         try:
             # FIXME: temporary DB connection info
             self.db = psycopg2.connect(host="localhost",port=5432,user="nobody",database="sophie")
-        except exception, e:
+        except Exception, e:
             log.warn("cannot connect to sophie: %s", str(e))
             sys.exit(1)
 
