@@ -31,7 +31,7 @@ from gzip import GzipFile
 
 # FIXME: I hate messing with sys.path
 sys.path.append("..")
-import dmatch
+import dmatch.rules as rules
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class Extractor(object):
             fname = os.path.join(dirname, basename)
 
             # Select content
-            for kind, matcher in dmatch.CONTENT_INFO.iteritems():
+            for kind, matcher in rules.CONTENT_INFO.iteritems():
                 m = matcher.match(fname)
                 if m:
                     yield binname, kind, fname
