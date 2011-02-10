@@ -157,31 +157,45 @@ class Extractor(object):
         # No big risk of SQL injection here as the patterns come from a trusted
         # source
         query = """
-        SELECT f.pkgid, d.directory, f.basename
-          FROM binfiles f
-          JOIN directories d on d.dir_key = f.dirnamekey
+        CREATE TEMP TABLE wanted_dirs AS
+        SELECT d.dir_key, d.directory
+          FROM directories d
          WHERE d.directory IN (%s)
             OR %s
         """ % (
             ", ".join(["'%s'" % x for x in sql_eq]),
             " OR ".join(["d.directory LIKE '%s'" % x for x in sql_like])
         )
-        log.info("Merged query: %s", query)
+        log.info("Dir shopping list query: %s", query)
+        temp_table = self.db.cursor()
+        temp_table.execute(query)
+        log.info("query-all-files:built directory shopping list in wanted_dirs")
 
+        query = """
+        SELECT f.pkgid, d.directory, f.basename
+          FROM binfiles f
+          JOIN wanted_dirs d on d.dir_key = f.dirnamekey;
+        """
         c = self.db.cursor("files")
         c.execute(query)
-        for pkgid, dirname, basename in c:
-            fname = os.path.join(dirname, basename)
-            count_read += 1
-            for kind, matcher in rules.CONTENT_INFO.iteritems():
-                # Further filtering by regexp
-                m = matcher.match(fname)
-                if m:
-                    yield pkgid, kind, fname
-                    count_matched += 1
-            if count_read % 100000 == 0:
-                log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
+        batch_size = max(c.arraysize, 2048)
+        log.info("query-all-files:psycopg2 suggests batch size of %d; using %d", c.arraysize, batch_size)
+        while True:
+            rows = c.fetchmany(batch_size)
+            if not rows: break
+            for pkgid, dirname, basename in rows:
+                fname = os.path.join(dirname, basename)
+                count_read += 1
+                for kind, matcher in rules.CONTENT_INFO.iteritems():
+                    # Further filtering by regexp
+                    m = matcher.match(fname)
+                    if m:
+                        yield pkgid, kind, fname
+                        count_matched += 1
+                if count_read % 100000 == 0:
+                    log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
         c.close()
+        temp_table.close()
 
     def do_files(self):
         # Export files
