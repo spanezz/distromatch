@@ -5,125 +5,9 @@ import os
 import os.path
 from gzip import GzipFile
 import logging
+from rules import *
 
 log = logging.getLogger(__name__)
-
-class REStemmer(object):
-    def __init__(self, regex):
-        self.re = re.compile(regex)
-    def stem(self, word):
-        mo = self.re.match(word)
-        if mo: return mo.group(1)
-        return None
-
-class CPANStemmer(object):
-    def __init__(self, regex):
-        self.re = re.compile(regex)
-    def cpan_norm(self, word):
-        return re.sub(r"[:-]+", "-", word.lower())
-    def stem(self, word):
-        mo = self.re.match(word)
-        if mo: return self.cpan_norm(mo.group(1))
-        return None
-
-# Stemming prefixes:
-# ZDL: development libraries
-# ZSL: shared libraries
-# ZPL: perl modules
-# ZPY: python modules
-STEMMERS = {
-        "debian": {
-            'ZDL': [
-                     REStemmer('^lib(.+?)-dev$'),
-                     REStemmer('^lib(.+?)[.0-9_-]*-dev$'),
-                   ],
-            'ZSL': [
-                     REStemmer('^lib(.+?\d)$'),
-                     REStemmer('^lib(.+?)[.0-9_-]+$'),
-                   ],
-            'ZPL': [ CPANStemmer('^lib(.+)-perl$'), ],
-            'ZPY': [ REStemmer('^python\d?-(.+)$'), ],
-        },
-        "fedora": {
-            'ZDL': [
-                     REStemmer('^(?:lib)?(.+?)-devel$'),
-                     REStemmer('^(?:lib)?(.+?)[.0-9_-]*-devel$'),
-                   ],
-            'ZSL': [
-                     REStemmer('^(.+?)-libs$'),
-                     REStemmer('^(.+?)[.0-9_-]*-libs$'),
-                   ],
-            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
-            'ZPY': [ REStemmer('^(.+)-python\d?$'), ],
-        },
-        "mandriva": {
-            'ZDL': [
-                     REStemmer('^lib(?:64)?(.+?)-devel$'),
-                     REStemmer('^lib(?:64)?(.+?)[.0-9_-]*-devel$'),
-                   ],
-            'ZSL': [
-                     REStemmer('^lib(?:64)?(.+?\d)$'), 
-                     REStemmer('^lib(?:64)?(.+?)[.0-9_-]*?$'), 
-                   ],
-            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
-            'ZPY': [ REStemmer('^python-(.+)$'), ],
-        },
-        "suse": {
-            'ZDL': [
-                     REStemmer('^(?:lib)?(.+?)-devel$'),
-                     REStemmer('^(?:lib)?(.+?)[.0-9_-]*-devel$'),
-                   ],
-            'ZSL': [
-                     REStemmer('^(.+?)-libs$'),
-                     REStemmer('^(.+?)[.0-9_-]*-libs$'),
-                   ],
-            'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
-            'ZPY': [ REStemmer('^python-(.+)$'), ],
-        },
-}
-
-class ContentMatch(object):
-    def __init__(self, pfx, regexp):
-        self.pfx = pfx
-        self.regexp = regexp
-
-    def match(self, fname):
-        mo = self.regexp.match(fname)
-        if mo: return mo.group(1)
-        return None
-
-# What we consider interesting in package contents lists
-CONTENT_INFO = {
-        # .desktop files
-        'desktop': ContentMatch('XFD', re.compile(r"^[./]*usr/share/applications/(.+\.desktop)$")),
-        # executable commands
-        'bin': ContentMatch('XFB', re.compile(r"^[./]*(?:usr/)bin/(.+)$")),
-        # pkg-config metadata
-        'pc': ContentMatch('XFPC', re.compile(r"^.+/pkgconfig/(.+)\.pc$")),
-        # shared library info
-        'shlib': ContentMatch('XFSL', re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$")),
-        # devel library info
-        'devlib': ContentMatch('XFDL', re.compile(r"^[./]*usr/lib\d*/(.+)\.a$")),
-        # manpages
-        'man': ContentMatch('XFMAN', re.compile(r"[./]*usr/share/man/(.+)$")),
-        # python modules
-        'py': ContentMatch('XFPY', re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$")),
-}
-
-PREFIX_DOC = {
-    "XP": "package name",
-    "ZDL": "development library name",
-    "ZSL": "shared library name",
-    "ZPL": "perl module name",
-    "ZPY": "python module name",
-    "XFD": ".desktop file",
-    "XFB": "executable file",
-    "XFPC": "pkg-config file",
-    "XFSL": "shared library",
-    "XFDL": "development library",
-    "XFMAN": "man page",
-    "XFPY": "python module",
-}
 
 class UserError(Exception):
     """
@@ -144,6 +28,16 @@ class Distro(object):
     "Package information from one distro"
 
     def __init__(self, name, style=None, reindex=False, root="."):
+        if style is None:
+            style_fname = os.path.join(root, "dist-"+name, "style")
+            try:
+                style = open(style_fname).read().strip()
+            except Exception, e:
+                if name in STEMMERS:
+                    log.info("cannot read style file in %s: %s. Defaulting to %s", style_fname, str(e), name)
+                    style = name
+                else:
+                    raise RuntimeError("cannot read style file in %s: %s" % (style_fname, str(e)))
         self.name = name
         self.style = style
         self.root = os.path.abspath(os.path.join(root, "dist-" + name))
@@ -465,15 +359,9 @@ class Distros(object):
             if not d.startswith("dist-"): continue
             name = d[5:]
             try:
-                style = open(os.path.join(root, d, "style")).read().strip()
+                self.distros.append(Distro(name, reindex=reindex, root=root))
             except Exception, e:
-                if name in STEMMERS:
-                    log.info("cannot read style file in %s: %s. Defaulting to %s", d, str(e), name)
-                    style = name
-                else:
-                    log.warn("cannot read style file in %s: %s. Skipping data source", d, str(e))
-                    continue
-            self.distros.append(Distro(name, style=style, reindex=reindex, root=root))
+                log.info("cannot access distribution in %s: %s. skipping %s", d, str(e), name)
         self.distro_map = dict([(x.name, x) for x in self.distros])
 
     def make_matcher(self, start):
