@@ -40,7 +40,8 @@ class Extractor(object):
         self.outdir = outdir
         try:
             # FIXME: temporary DB connection info
-            self.db = psycopg2.connect(host="localhost",port=5432,user="nobody",database="sophie")
+            #self.db = psycopg2.connect(host="localhost",port=5432,user="nobody",database="sophie")
+	    self.db = psycopg2.connect(host="sophie-db.latmos.ipsl.fr:5432",port=5432,user="nobody",database="sophie")
         except exception, e:
             log.warn("cannot connect to sophie: %s", str(e))
             sys.exit(1)
