@@ -46,7 +46,7 @@ class Extractor(object):
             sys.exit(1)
 
     def query_binsrc(self, tag, rk):
-        c = self.db.cursor()
+        c = self.db.cursor("binsrc")
         c.execute("""
         SELECT Rpmfiles.filename, Rpmtags.value
           FROM d_arch Arch
@@ -63,14 +63,15 @@ class Extractor(object):
             srcname = sfn.rsplit("-", 2)[0]
             yield binname, srcname
             count += 1
-            if count % 10 == 0:
-                log.info("%s:%dk bin<->src mappings read read", tag, count / 1)
-            if count == 100:
-                log.info("debugging break")
-                break
+            if count % 1000 == 0:
+                log.info("%s:%dk bin<->src mappings read", tag, count / 1)
+            #if count == 2000:
+            #    log.info("debugging break")
+            #    break
+        c.close()
 
     def query_files(self, tag, rk):
-        c = self.db.cursor()
+        c = self.db.cursor("files")
         c.execute("""
         SELECT Rpmfiles.filename, Directories.directory, Binfiles.basename
           FROM d_arch Arch
@@ -96,12 +97,12 @@ class Extractor(object):
                     count_matched += 1
 
             count_read += 1
-            #if count_read % 100000 == 0:
-            log.info("%s:%dk paths read, %d paths matched", tag, count_read/1000, count_matched)
-
-            if count_read == 100:
-                log.info("debugging break")
-                break
+            if count_read % 100000 == 0:
+                log.info("%s:%dk paths read, %d paths matched", tag, count_read/1000, count_matched)
+            #if count_read == 100:
+            #    log.info("debugging break")
+            #    break
+        c.close()
 
     def writeout(self, tag, name, items):
         """
@@ -139,11 +140,13 @@ class Extractor(object):
             self.writeout(tag, "interesting-files", self.query_files(tag, rk))
 
 if __name__ == "__main__":
+    date_format = "%c"
+    log_format = "%(asctime)s:%(levelname)s:%(name)s:%(message)s"
     if os.isatty(sys.stderr.fileno()):
-        logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, datefmt=date_format, format=log_format)
         #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     else:
-        logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr, datefmt=date_format, format=log_format)
 
     # FIXME: temporary output dir
     extractor = Extractor(".")
