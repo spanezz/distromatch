@@ -145,27 +145,43 @@ class Extractor(object):
         count_read = 0
         count_matched = 0
 
-        # Run all targeted Sophie queries in sequence
+        # Build the file extract query, merging the SQL directory constraints
+        # in CONTENT_INFO
+        sql_eq = set()
+        sql_like = set()
         for kind, matcher in rules.CONTENT_INFO.iteritems():
-            log.info("query-all-files:extracting list of '%s' files", kind)
-            query = matcher.sophie
-            if query is None:
-                log.info("query-all-files:no Sophie query for %s: skipping", kind)
-                continue
+            cons = matcher.sophie
+            if cons is None: continue
+            sql_eq.update(cons.get("eq", []))
+            sql_like.update(cons.get("like", []))
+        # No big risk of SQL injection here as the patterns come from a trusted
+        # source
+        query = """
+        SELECT f.pkgid, d.directory, f.basename
+          FROM binfiles f
+          JOIN directories d on d.dir_key = f.dirnamekey
+         WHERE d.directory IN (%s)
+            OR %s
+        """ % (
+            ", ".join(["'%s'" % x for x in sql_eq]),
+            " OR ".join(["d.directory LIKE '%s'" % x for x in sql_like])
+        )
+        log.info("Merged query: %s", query)
 
-            c = self.db.cursor("files_" + kind)
-            c.execute(query)
-            for pkgid, dirname, basename in c:
-                fname = os.path.join(dirname, basename)
+        c = self.db.cursor("files")
+        c.execute(query)
+        for pkgid, dirname, basename in c:
+            fname = os.path.join(dirname, basename)
+            count_read += 1
+            for kind, matcher in rules.CONTENT_INFO.iteritems():
                 # Further filtering by regexp
                 m = matcher.match(fname)
                 if m:
                     yield pkgid, kind, fname
                     count_matched += 1
-                count_read += 1
-                if count_read % 100000 == 0:
-                    log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
-            c.close()
+            if count_read % 100000 == 0:
+                log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
+        c.close()
 
     def do_files(self):
         # Export files
