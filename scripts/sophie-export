@@ -92,7 +92,7 @@ class DistOutput(object):
         if not os.path.exists(d):
             os.mkdir(d)
         self.fn_binsrc = os.path.join(d, "binsrc.gz")
-        self.fn_files = os.path.join(d, "files.gz")
+        self.fn_files = os.path.join(d, "interesting-files.gz")
         self.of_binsrc = GzipFile(self.fn_binsrc + ".tmp", "w")
         self.of_files = GzipFile(self.fn_files + ".tmp", "w")
 
