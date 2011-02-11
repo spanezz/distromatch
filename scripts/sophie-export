@@ -45,7 +45,7 @@ class FileIndex(object):
             if os.path.exists(fname):
                 os.unlink(fname)
         self.db = sqlite3.connect(self.fname)
-    
+
     def index(self, items):
         log.info("fileindex: create tables")
         c = self.db.cursor()
@@ -88,8 +88,11 @@ class FileIndex(object):
 
 class DistOutput(object):
     def __init__(self, outdir, tag):
-        self.fn_binsrc = os.path.join(outdir, "binsrc-%s.gz" % tag)
-        self.fn_files = os.path.join(outdir, "files-%s.gz" % tag)
+        d = os.path.join(outdir, "dist-" + tag)
+        if not os.path.exists(d):
+            os.mkdir(d)
+        self.fn_binsrc = os.path.join(d, "binsrc.gz")
+        self.fn_files = os.path.join(d, "files.gz")
         self.of_binsrc = GzipFile(self.fn_binsrc + ".tmp", "w")
         self.of_files = GzipFile(self.fn_files + ".tmp", "w")
 
@@ -151,6 +154,7 @@ class Extractor(object):
         log.info("Dir shopping list query: %s", query)
         temp_table = self.db.cursor()
         temp_table.execute(query)
+        temp_table.execute("CREATE INDEX wanted_dirs_dk ON wanted_dirs USING hash dir_key")
         log.info("query-all-files:built directory shopping list in wanted_dirs")
 
         # Precache the dir names so later we only transfer file names
@@ -164,7 +168,7 @@ class Extractor(object):
             for key, path in rows:
                 dirs[key] = path
         log.info("query-all-files:retrieved info about %d directories", len(dirs))
-        
+
         # Get the file names and filter them
         query = """
         SELECT f.pkgid, f.dirnamekey, f.basename
@@ -242,7 +246,7 @@ class Extractor(object):
     def get_distro_index(self):
         """
         Read per-release information from Sophie.
-        
+
         Returns the release info in a dict, indexed by release key.
         """
         c = self.db.cursor()
@@ -254,7 +258,7 @@ class Extractor(object):
         res = {}
         for name, ver, rk in c:
             # Build the tag we use for file names
-            tname = name.lower().replace(" ", "-")
+            tname = name.lower().replace(" ", "")
             tver = ver.lower().replace(" ", "-")
             tag = tname + "-" + tver
             res[rk] = dict(tag=tag, name=name, ver=ver)

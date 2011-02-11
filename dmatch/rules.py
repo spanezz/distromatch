@@ -79,7 +79,8 @@ class ContentMatch(object):
         self.pfx = pfx
         self.regexp = regexp
         # SQL directory filter(s) (ORed togheter) to use when querying file
-        # names from Sophie
+        # names from Sophie. BEWARE: they will not be SQL-escaped and will be
+        # used as is
         self.sophie = sophie
 
     def match(self, fname):
