@@ -21,12 +21,15 @@ __license__ = """
     with this program; if not, write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 """
+VERSION = "0.1"
 
 import psycopg2
 import logging
 import sys
 import os
 import os.path
+import time
+import sqlite3
 from gzip import GzipFile
 
 # FIXME: I hate messing with sys.path
@@ -35,9 +38,74 @@ import dmatch.rules as rules
 
 log = logging.getLogger(__name__)
 
+class FileIndex(object):
+    def __init__(self, fname, create=False):
+        self.fname = fname
+        if create:
+            if os.path.exists(fname):
+                os.unlink(fname)
+        self.db = sqlite3.connect(self.fname)
+
+    def index(self, items):
+        log.info("fileindex: create tables")
+        c = self.db.cursor()
+        c.execute("PRAGMA journal_mode = OFF")
+        c.execute("DROP TABLE IF EXISTS files")
+        c.execute("""
+        CREATE TABLE files (
+            pkgid STRING NOT NULL,
+            kind STRING NOT NULL,
+            fname STRING NOT NULL
+        )
+        """)
+        c.close()
+
+        # If items is the big fat iterator, this ought to work with one single
+        # precompiled statement. Fingers crossed that there aren't any
+        # well-known undocumented python bugs lurking behind: it's too good to
+        # be true
+        log.info("fileindex: insert data")
+        self.db.executemany("INSERT INTO files VALUES (?, ?, ?)", items)
+
+        # Deferred index creation ought to be more efficient
+        log.info("fileindex: create index")
+        c = self.db.cursor()
+        c.execute("CREATE INDEX files_pkgid ON files (pkgid)")
+        c.close()
+
+    def get(self, pkgid):
+        """
+        Get a sequence of (kind, fname) by pkgid
+        """
+        c = self.db.cursor()
+        c.execute("SELECT kind, fname FROM files WHERE pkgid=?", (pkgid,))
+        for kind, fname in c:
+            yield kind, unicode(fname)
+        c.close()
+
+    def close(self):
+        self.db.close()
+
+class DistOutput(object):
+    def __init__(self, outdir, tag):
+        d = os.path.join(outdir, "dist-" + tag)
+        if not os.path.exists(d):
+            os.mkdir(d)
+        self.fn_binsrc = os.path.join(d, "binsrc.gz")
+        self.fn_files = os.path.join(d, "files.gz")
+        self.of_binsrc = GzipFile(self.fn_binsrc + ".tmp", "w")
+        self.of_files = GzipFile(self.fn_files + ".tmp", "w")
+
+    def close(self):
+        self.of_binsrc.close()
+        self.of_files.close()
+        os.rename(self.fn_binsrc + ".tmp", self.fn_binsrc)
+        os.rename(self.fn_files + ".tmp", self.fn_files)
+
 class Extractor(object):
-    def __init__(self, outdir="."):
+    def __init__(self, outdir=".", cachedir="."):
         self.outdir = outdir
+        self.cachedir = cachedir
         try:
             # FIXME: temporary DB connection info
             #self.db = psycopg2.connect(host="localhost",port=5432,user="nobody",database="sophie")
@@ -46,144 +114,275 @@ class Extractor(object):
             log.warn("cannot connect to sophie: %s", str(e))
             sys.exit(1)
 
-    def query_binsrc(self, tag, rk):
-        c = self.db.cursor("binsrc")
-        c.execute("""
-        SELECT Rpmfiles.filename, Rpmtags.value
-          FROM d_arch Arch
-          JOIN d_media Medias ON Medias.d_arch = Arch.d_arch_key
-          JOIN d_media_path MediasPaths ON MediasPaths.d_media = Medias.d_media_key
-          JOIN d_path Paths ON Paths.d_path_key = MediasPaths.d_path
-          JOIN rpmfiles Rpmfiles ON Rpmfiles.d_path = Paths.d_path_key
-          JOIN rpms_tags Rpmtags ON Rpmtags.pkgid = Rpmfiles.pkgid
-         WHERE Arch.d_release = %s AND Rpmtags.tagname = 'sourcerpm'
-        """, (rk,))
-        count = 0
-        for fn, sfn in c:
-            binname = fn.rsplit("-", 3)[0]
-            srcname = sfn.rsplit("-", 2)[0]
-            yield binname, srcname
-            count += 1
-            if count % 10000 == 0:
-                log.info("%s:%dk bin<->src mappings read", tag, count / 1)
-            #if count == 2000:
-            #    log.info("debugging break")
-            #    break
-        c.close()
+    def is_old(self, fname):
+        """
+        Check if the given file is old and should be rebuilt
 
-    def query_files(self, tag, rk):
-        c = self.db.cursor("files")
-        c.execute("""
-        SELECT Rpmfiles.filename, Directories.directory, Binfiles.basename
-          FROM d_arch Arch
-          JOIN d_media Medias ON Medias.d_arch = Arch.d_arch_key
-          JOIN d_media_path MediasPaths ON MediasPaths.d_media = Medias.d_media_key
-          JOIN d_path Paths ON Paths.d_path_key = MediasPaths.d_path
-          JOIN rpmfiles Rpmfiles ON Rpmfiles.d_path = Paths.d_path_key
-          JOIN binfiles Binfiles ON Binfiles.pkgid = Rpmfiles.pkgid
-          JOIN directories Directories on Directories.dir_key = binfiles.dirnamekey
-         WHERE Arch.d_release = %s
-        """, (rk,))
+        "Old" is currently defined as 'older than 5 days'
+        """
+        if os.path.exists(fname):
+            then = os.path.getmtime(fname)
+        else:
+            then = 0
+        return time.time() - then > 3600 * 24 * 5
+
+    def query_all_files_from_sophie(self):
         count_read = 0
         count_matched = 0
-        for rpmfile, dirname, basename in c:
-            binname = rpmfile.rsplit("-", 3)[0]
-            fname = os.path.join(dirname, basename)
 
-            # Select content
-            for kind, matcher in rules.CONTENT_INFO.iteritems():
-                m = matcher.match(fname)
-                if m:
-                    yield binname, kind, fname
-                    count_matched += 1
+        # Build the file extract query, merging the SQL directory constraints
+        # in CONTENT_INFO
+        sql_eq = set()
+        sql_like = set()
+        for kind, matcher in rules.CONTENT_INFO.iteritems():
+            cons = matcher.sophie
+            if cons is None: continue
+            sql_eq.update(cons.get("eq", []))
+            sql_like.update(cons.get("like", []))
+        # No big risk of SQL injection here as the patterns come from a trusted
+        # source
+        query = """
+        CREATE TEMP TABLE wanted_dirs AS
+        SELECT d.dir_key, d.directory
+          FROM directories d
+         WHERE d.directory IN (%s)
+            OR %s
+        """ % (
+            ", ".join(["'%s'" % x for x in sql_eq]),
+            " OR ".join(["d.directory LIKE '%s'" % x for x in sql_like])
+        )
+        log.info("Dir shopping list query: %s", query)
+        temp_table = self.db.cursor()
+        temp_table.execute(query)
+        log.info("query-all-files:built directory shopping list in wanted_dirs")
 
-            count_read += 1
-            if count_read % 100000 == 0:
-                log.info("%s:%dk paths read, %d paths matched", tag, count_read/1000, count_matched)
-            #if count_read == 100:
-            #    log.info("debugging break")
-            #    break
+        # Precache the dir names so later we only transfer file names
+        dirlist = self.db.cursor("dirs")
+        dirlist.execute("SELECT dir_key, directory FROM wanted_dirs")
+        batch_size = max(dirlist.arraysize, 4096)
+        dirs = {}
+        while True:
+            rows = dirlist.fetchmany(batch_size)
+            if not rows: break
+            for key, path in rows:
+                dirs[key] = path
+        log.info("query-all-files:retrieved info about %d directories", len(dirs))
+
+        # Get the file names and filter them
+        query = """
+        SELECT f.pkgid, f.dirnamekey, f.basename
+          FROM binfiles f
+          JOIN wanted_dirs d ON f.dirnamekey = d.dir_key
+        """
+        c = self.db.cursor("files")
+        c.execute(query)
+        batch_size = max(c.arraysize, 8192)
+        log.info("query-all-files:psycopg2 suggests batch size of %d; using %d", c.arraysize, batch_size)
+        while True:
+            rows = c.fetchmany(batch_size)
+            if not rows: break
+            for pkgid, dirid, basename in rows:
+                dirname = dirs.get(dirid, None)
+                if dirname is None: continue
+                fname = os.path.join(dirname, basename)
+                count_read += 1
+                for kind, matcher in rules.CONTENT_INFO.iteritems():
+                    # Further filtering by regexp
+                    m = matcher.match(fname)
+                    if m:
+                        yield pkgid, kind, m
+                        count_matched += 1
+                if count_read % 100000 == 0:
+                    log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
         c.close()
+        temp_table.close()
 
-    def writeout(self, fname, items):
+    def query_all_files(self):
         """
-        Atomically write the items generated by @items to their target file
+        Yield the tuples of (pkgid, kind, fname) for interesting files in the
+        Sophie database
         """
-        out = GzipFile(fname+".tmp", "w")
-        for i in items:
-            print >>out, " ".join(i)
-        out.close()
-        os.rename(fname+".tmp", fname)
+        cache_fname = os.path.join(self.cachedir, "all-interesting-files.gz")
 
-    def do_all(self):
-        # Read the list of (distro, release) we are exporting
+        if self.is_old(cache_fname):
+            # If the cache is older than 5 days, rebuild it
+            log.info("query-all-files:exporting from database")
+            out = GzipFile(cache_fname+".tmp", "w")
+            for pkgid, kind, fname in self.query_all_files_from_sophie():
+                print >>out, pkgid, kind, fname
+                yield pkgid, kind, fname
+            out.close()
+            os.rename(cache_fname+".tmp", cache_fname)
+        else:
+            # Otherwise reuse it
+            log.info("query-all-files:reading from cache")
+            infd = GzipFile(cache_fname, "r")
+            count_read = 0
+            for line in infd:
+                pkgid, kind, fname = line.strip().split(None, 2)
+                yield pkgid, kind, fname
+                count_read += 1
+                if count_read % 100000 == 0:
+                    log.info("query-all-files:%dk paths read from cache", count_read/1000)
+
+    def build_global_file_index(self, idxfname):
+        log.info("building global file index")
+        idx = FileIndex(idxfname + ".tmp", create=True)
+        idx.index(self.query_all_files())
+        idx.close()
+        os.rename(idxfname + ".tmp", idxfname)
+
+    def get_global_file_index(self):
+        """
+        Get the pkgid->kind,fname index, rebuilding it the current one is old
+        or doesn't exist
+        """
+        idxfname = os.path.join(self.cachedir, "all-files.sqlite")
+        if self.is_old(idxfname):
+            self.build_global_file_index(idxfname)
+        return FileIndex(idxfname)
+
+    def get_distro_index(self):
+        """
+        Read per-release information from Sophie.
+
+        Returns the release info in a dict, indexed by release key.
+        """
         c = self.db.cursor()
         c.execute("""
         SELECT d.name, r.version, r.d_release_key
           FROM distributions d, d_release r
          WHERE r.distributions = d.distributions_key
         """)
+        res = {}
         for name, ver, rk in c:
             # Build the tag we use for file names
-            tname = name.lower().replace(" ", "-")
+            tname = name.lower().replace(" ", "")
             tver = ver.lower().replace(" ", "-")
             tag = tname + "-" + tver
+            res[rk] = dict(tag=tag, name=name, ver=ver)
+        return res
 
-            log.info("%s:%s %s", tag, name, ver)
-
-            # Export binsrc
-            log.info("%s:exporting binary<->source package mapping", tag)
-            fname = os.path.join(self.outdir, "binsrc-" + tag + ".gz")
-            self.writeout(fname, self.query_binsrc(tag, rk))
-
-            # Export files
-            log.info("%s:exporting filtered file list", tag)
-            fname = os.path.join(self.outdir, "interesting-files-" + tag + ".gz")
-            self.writeout(fname, self.query_files(tag, rk))
-
-    def query_all_files(self):
+    def query_packages_from_sophie(self):
+        c = self.db.cursor("packages")
+        c.execute("""
+        SELECT Arch.d_release, Rpmfiles.pkgid, Rpmfiles.filename, Rpmtags.value
+          FROM d_arch Arch
+          JOIN d_media Medias ON Medias.d_arch = Arch.d_arch_key
+          JOIN d_media_path MediasPaths ON MediasPaths.d_media = Medias.d_media_key
+          JOIN d_path Paths ON Paths.d_path_key = MediasPaths.d_path
+          JOIN rpmfiles Rpmfiles ON Rpmfiles.d_path = Paths.d_path_key
+          JOIN rpms_tags Rpmtags ON Rpmtags.pkgid = Rpmfiles.pkgid
+         WHERE Rpmtags.tagname = 'sourcerpm'
+        """)
+        batch_size = max(c.arraysize, 8192)
+        log.info("query-packages:psycopg2 suggests batch size of %d; using %d", c.arraysize, batch_size)
         count_read = 0
-        count_matched = 0
+        while True:
+            rows = c.fetchmany(batch_size)
+            if not rows: break
+            for rk, pkgid, binfname, srcfname in rows:
+                binname = binfname.rsplit("-", 3)[0]
+                srcname = srcfname.rsplit("-", 2)[0]
+                yield rk, pkgid, binname, srcname
+                count_read += 1
+                if count_read % 10000 == 0:
+                    log.info("query-packages:%dk packages read", count_read / 1000)
+        c.close()
 
-        # Run all targeted Sophie queries in sequence
-        for kind, matcher in rules.CONTENT_INFO.iteritems():
-            log.info("query-all-files:extracting list of '%s' files", kind)
-            query = matcher.sophie
-            if query is None:
-                log.info("query-all-files:no Sophie query for %s: skipping", kind)
-                continue
+    def query_packages(self):
+        """
+        Yield the tuples of (rk, pkgid, binname, srcname) for all packages in
+        the Sophie database
+        """
+        cache_fname = os.path.join(self.cachedir, "all-packages.gz")
 
-            c = self.db.cursor("files_" + kind)
-            c.execute(query)
-            for pkgid, dirname, basename in c:
-                fname = os.path.join(dirname, basename)
-                # Further filtering by regexp
-                m = matcher.match(fname)
-                if m:
-                    yield pkgid, kind, fname
-                    count_matched += 1
+        if self.is_old(cache_fname):
+            # If the cache is older than 5 days, rebuild it
+            log.info("query-packages:exporting from database")
+            out = GzipFile(cache_fname+".tmp", "w")
+            for rk, pkgid, binname, srcname in self.query_packages_from_sophie():
+                print >>out, rk, pkgid, binname, srcname
+                yield rk, pkgid, binname, srcname
+            out.close()
+            os.rename(cache_fname+".tmp", cache_fname)
+        else:
+            # Otherwise reuse it
+            log.info("query-packages:reading from cache")
+            infd = GzipFile(cache_fname, "r")
+            count_read = 0
+            for line in infd:
+                rk, pkgid, binname, srcname = line.strip().split(None, 3)
+                yield int(rk), pkgid, binname, srcname
                 count_read += 1
                 if count_read % 100000 == 0:
-                    log.info("query-all-files:%dk paths read, %d paths matched", count_read/1000, count_matched)
-            c.close()
+                    log.info("query-packages:%dk packages read from cache", count_read/1000)
 
-    def do_files(self):
-        # Export files
-        log.info("exporting full filtered file list")
-        fname = os.path.join(self.outdir, "all-interesting-files.gz")
-        self.writeout(fname, self.query_all_files())
+    def export_data(self):
+        distros = self.get_distro_index();
+        outfiles = {}
+        files = self.get_global_file_index()
+        for rk, pkgid, binname, srcname in self.query_packages():
+            # Fetch the distribution tag
+            distro = distros.get(rk, None)
+            if distro is None: continue
+            tag = distro["tag"]
+
+            # Get the output files fds
+            of = outfiles.get(tag, None)
+            if not of:
+                of = DistOutput(self.outdir, tag)
+                outfiles[tag] = of
+
+            # Output the bin<->src mapping for this package
+            print >>of.of_binsrc, binname, srcname
+
+            # Output the file list for this package
+            for kind, fname in files.get(pkgid):
+                print >>of.of_files, binname, kind, fname.encode("utf-8")
+
+        # Finalise all files
+        log.info("export_data:export done, closing all %d output files", len(outfiles))
+        for tag, of in outfiles.iteritems():
+            of.close()
 
 if __name__ == "__main__":
+    from optparse import OptionParser
+
+    # Parser for command line
+    class Parser(OptionParser):
+        def __init__(self, *args, **kwargs):
+            OptionParser.__init__(self, add_help_option=False, *args, **kwargs)
+
+        def error(self, msg):
+            sys.stderr.write("%s: error: %s\n\n" % (self.get_prog_name(), msg))
+            self.print_help(sys.stderr)
+            sys.exit(2)
+
+    parser = Parser(usage="usage: %prog [options]",
+                    version="%prog "+ VERSION,
+                    description="Export distromatch info from the Sophie database")
+    #parser.add_option("--verbose", action="store_true", help="Verbose output")
+    parser.add_option("--debug", action="store_true", help="Debug output")
+    parser.add_option("--outdir", default=".", help="Destination directory. Default: %default")
+    parser.add_option("--cachedir", default=".", help="Cache directory. Default: %default")
+    #parser.add_option("--reindex", action="store_true", help="Rebuild indices")
+    #parser.add_option("--stats", action="store_true", help="Print stats instead of matches")
+    #parser.add_option("--dump", action="store_true", help="Dump available information about the given distribution/package")
+    #parser.add_option("--list", action="store_true", help="List available distributions")
+
+    (opts, args) = parser.parse_args()
+
     date_format = "%c"
     log_format = "%(asctime)s:%(levelname)s:%(name)s:%(message)s"
     if os.isatty(sys.stderr.fileno()):
-        logging.basicConfig(level=logging.INFO, stream=sys.stderr, datefmt=date_format, format=log_format)
-        #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+        if opts.debug:
+            logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, datefmt=date_format, format=log_format)
+        else:
+            logging.basicConfig(level=logging.INFO, stream=sys.stderr, datefmt=date_format, format=log_format)
     else:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr, datefmt=date_format, format=log_format)
 
-    # FIXME: temporary output dir
-    extractor = Extractor(".")
-    #extractor.do_all()
-    extractor.do_files()
+    extractor = Extractor(opts.outdir, opts.cachedir)
+    extractor.export_data()
 
