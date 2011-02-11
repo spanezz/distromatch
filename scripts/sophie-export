@@ -80,7 +80,7 @@ class FileIndex(object):
         c = self.db.cursor()
         c.execute("SELECT kind, fname FROM files WHERE pkgid=?", (pkgid,))
         for kind, fname in c:
-            yield kind, fname
+            yield kind, unicode(fname)
         c.close()
 
     def close(self):
@@ -336,7 +336,7 @@ class Extractor(object):
 
             # Output the file list for this package
             for kind, fname in files.get(pkgid):
-                print >>of.of_files, binname, kind, fname
+                print >>of.of_files, binname, kind, fname.encode("utf-8")
 
         # Finalise all files
         log.info("export_data:export done, closing all %d output files", len(outfiles))
