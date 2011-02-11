@@ -363,7 +363,7 @@ if __name__ == "__main__":
     parser = Parser(usage="usage: %prog [options]",
                     version="%prog "+ VERSION,
                     description="Export distromatch info from the Sophie database")
-    #parser.add_option("--verbose", action="store_true", help="Verbose output")
+    parser.add_option("--verbose", action="store_true", help="Verbose output")
     parser.add_option("--debug", action="store_true", help="Debug output")
     parser.add_option("--outdir", default=".", help="Destination directory. Default: %default")
     parser.add_option("--cachedir", default=".", help="Cache directory. Default: %default")
@@ -376,7 +376,7 @@ if __name__ == "__main__":
 
     date_format = "%c"
     log_format = "%(asctime)s:%(levelname)s:%(name)s:%(message)s"
-    if os.isatty(sys.stderr.fileno()):
+    if opts.verbose or opts.debug or os.isatty(sys.stderr.fileno()):
         if opts.debug:
             logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, datefmt=date_format, format=log_format)
         else:
