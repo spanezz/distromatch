@@ -154,7 +154,7 @@ class Extractor(object):
         log.info("Dir shopping list query: %s", query)
         temp_table = self.db.cursor()
         temp_table.execute(query)
-        temp_table.execute("CREATE INDEX wanted_dirs_dk ON wanted_dirs USING hash dir_key")
+        temp_table.execute("CREATE INDEX wanted_dirs_dk ON wanted_dirs USING hash (dir_key)")
         log.info("query-all-files:built directory shopping list in wanted_dirs")
 
         # Precache the dir names so later we only transfer file names
