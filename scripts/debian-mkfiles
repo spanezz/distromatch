@@ -36,13 +36,13 @@ import urllib
 import logging
 
 # FIXME: I hate messing with sys.path
-sys.path.append("..")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), "..")))
 import dmatch
 
 log = logging.getLogger(__name__)
 
 VERSION="0.1"
-CACHEDIR="cache"
+CACHEDIR=os.environ.get("CACHEDIR", "./cache")
 
 def cached(url, processor):
     """
@@ -120,7 +120,7 @@ def read_contents(fd):
                 tgt.add((pkg, kind, m))
                 count_matched += 1
         count_read += 1
-        if count_read % 100000 == 0:
+        if count_read % 1000000 == 0:
             log.info("%s:%dk paths read, %d paths matched", url, count_read/1000, count_matched)
 
     return tgt
