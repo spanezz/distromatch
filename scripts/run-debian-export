@@ -1,0 +1,72 @@
+#!/bin/bash
+
+set -ue
+
+#if [ -t STDOUT ]
+#then
+#	progress() {
+#		echo "$@"
+#	}
+#else
+#	progress() {
+#		:
+#	}
+#fi
+
+# We are run with output redirected to a logfile, so we should always output
+# our progess
+progress() {
+	echo "$@"
+}
+
+# Update all distromatch sources in the given directory
+
+ROOT=${1:?"Usage: %0 rootdir cachedir"}
+SCRIPTDIR=$(dirname $0)
+CACHEDIR=${2:-"./cache"}
+export CACHEDIR
+
+mkdir -p $CACHEDIR
+touch -d "2 days ago" $CACHEDIR/rebuild-threshold
+
+for source in $ROOT/dist-debian-* $ROOT/dist-ubuntu-*
+do
+	FN_UPTODATE=$source/last_update
+	FN_CONTENTFILES=$source/contentfiles
+	FN_INTFILES=$source/interesting-files.gz
+	FN_BINSRC=$source/binsrc.gz
+
+	# Skip if up to date
+	test $FN_UPTODATE -nt $CACHEDIR/rebuild-threshold && continue
+
+	# Generate interesting-files from Debian-style Content-* files
+	if [ -f $FN_CONTENTFILES ]
+	then
+		progress "Updating file lists in $source..."
+		$SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+		mv $FN_INTFILES.tmp $FN_INTFILES
+	fi
+
+	name=$(basename $source)
+	name=${name#dist-}
+
+	# Try generating package lists for Debian distributions
+	release=${name#debian-}
+	if [ "$release" != "$name" ]
+	then
+		progress "Updating package lists in $source..."
+		$SCRIPTDIR/debian-mkbinsrc debian $release | gzip > $FN_BINSRC.tmp
+		mv $FN_BINSRC.tmp $FN_BINSRC
+	fi
+
+	# Try generating package lists for Ubuntu distributions
+	release=${name#ubuntu-}
+	if [ "$release" != "$name" ]
+	then
+		progress "Updating package lists in $source..."
+		$SCRIPTDIR/debian-mkbinsrc ubuntu $release | gzip > $FN_BINSRC.tmp
+		mv $FN_BINSRC.tmp $FN_BINSRC
+	fi
+
+	touch $FN_UPTODATE
+done

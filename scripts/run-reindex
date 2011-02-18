@@ -1,0 +1,53 @@
+#!/bin/bash
+
+set -ue
+
+#if [ -t STDOUT ]
+#then
+#	progress() {
+#		echo "$@"
+#	}
+#else
+#	progress() {
+#		:
+#	}
+#fi
+
+# We are run with output redirected to a logfile, so we should always output
+# our progess
+progress() {
+	echo "$@"
+}
+
+# Do consolidation and reindexing
+
+ROOT=${1:?"Usage: %0 rootdir"}
+SCRIPTDIR=$(dirname $0)
+WEBDIR=/srv/dde.debian.net/web/exports/
+
+echo "Rebuild merged distro indices"
+for source in $ROOT/dist-*
+do
+	SUBS=$source-*
+	# Check to see if it's a merged distro
+	has_subs=
+	for s in $SUBS
+	do
+		test -d $s && has_subs=true
+	done
+	test -z "$has_subs" && continue
+
+	# Redo the merge
+	echo "Merge $SUBS into $source"
+	$SCRIPTDIR/merge-data-dirs $source $SUBS
+done
+
+echo "Archive the whole distromatch dataset"
+cd $ROOT
+tar -zcf $WEBDIR/distromatch-all.tar.gz.tmp dist-*/binsrc* dist-*/style dist-*/interesting-files*
+mv $WEBDIR/distromatch-all.tar.gz.tmp $WEBDIR/distromatch-all.tar.gz
+
+echo "Reindex with distromatch"
+$SCRIPTDIR/../distromatch --verbose --reindex --datadir=$ROOT
+
+exit 0

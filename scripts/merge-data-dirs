@@ -1,0 +1,22 @@
+#!/bin/sh
+
+set -ue
+
+TARGET="$1"
+shift
+
+# Merge binsrc and interesting file lists
+for fname in binsrc interesting-files
+do
+	(
+		for dir in "$@"
+		do
+			if [ -f "$dir/$fname.gz" ]; then
+				zcat "$dir/$fname.gz"
+			else
+				cat "$dir/$fname"
+			fi
+		done
+	) | sort -u | gzip > $TARGET/$fname.gz.tmp
+	mv $TARGET/$fname.gz.tmp $TARGET/$fname.gz
+done
