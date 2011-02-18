@@ -38,6 +38,7 @@ if __name__ == "__main__":
     parser.add_option("--stats", action="store_true", help="Print stats instead of matches")
     parser.add_option("--dump", action="store_true", help="Dump available information about the given distribution/package")
     parser.add_option("--list", action="store_true", help="List available distributions")
+    parser.add_option("--datadir", default=".", help="Directory with the indices (default: %default)")
 
     (opts, args) = parser.parse_args()
 
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     if not args and not (opts.reindex or opts.list):
         parser.error("please provide a distribution name")
 
-    distros = dmatch.Distros(reindex=opts.reindex)
+    distros = dmatch.Distros(reindex=opts.reindex, root=opts.datadir)
 
     # List distributions
     if opts.list:
