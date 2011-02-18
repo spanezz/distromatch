@@ -1,22 +1,30 @@
-To set it up:
+ ** README for distromatch
 
- foreach $DIST in debian fedora ...
-  1. mkdir dist-$DIST
-  2. Create a file dist-$DIST/binsrc containing, on each line:
-       binary-package-name source-file-name
-     with one line per binary package in the distribution.
-  3. Create a file dist-$DIST/files.gz containing, on each line:
-       binary-package-name file-pathname
-     with one line per file in each package in the distribution.
+distromatch perform matching of package names across distributions.
 
-To run it:
+It builds an index once for each distribution, then it is able to perform
+matching quickly from any distribution to any other one.
 
- ./distromatch distname pkgname
 
- Given package $pkgname in distribution $distname, shows all the matching
- packages in other distributions.
+ * How to set it up
 
-The first time it is run it will spend a lot of time filtering the file lists,
-saving the results in dist-*/interesting-files. It will also build the Xapian
-indices it needs for lookup.
+# Fetch distribution information (updated every 2 days)
+wget http://dde.debian.net/exports/distromatch-all.tar.gz
+
+# Unpack it
+mkdir data
+tar -C data -zxf distromatch-all.tar.gz
+
+# Reindex it (use --verbose if you are curious)
+./distromatch --datadir=data --reindex --verbose
+
+
+ * How to run it:
+
+./distromatch --datadir=data distname pkgname
+
+Given package $pkgname in distribution $distname, shows all the matching
+packages in other distributions.
+
+If you only provide $distname, it shows matches for all its packages.
 
