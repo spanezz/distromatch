@@ -50,32 +50,36 @@ class Distro(object):
             return True
         return False
 
+    def open_possibly_compressed(self, fname):
+        if os.path.exists(fname):
+            return open(fname)
+        elif os.path.exists(fname + ".gz"):
+            return GzipFile(fname + ".gz", "r")
+        else:
+            raise ValueError("%s: not found" % fname)
+
     def all_packages(self):
         "Return the set of all binary packages in this distro"
         fname = os.path.join(self.root, "binsrc")
-        if os.path.exists(fname):
-            infd = open(fname)
-        elif os.path.exists(fname + ".gz"):
-            infd = GzipFile(fname + ".gz", "r")
-        return set([x.strip().split()[0] for x in infd])
+        return set([x.strip().split()[0] for x in self.open_possibly_compressed(fname)])
 
-    def filter_filelist(self):
-        "Trim file lists extracting only 'interesting' files"
-        log.info("%s: filtering file list", self.name)
-        def do_filter():
-            for name, fname in read_filelist(os.path.join(self.root, "files.gz")):
-                for kind, matcher in CONTENT_INFO.iteritems():
-                    m = matcher.match(fname)
-                    if m:
-                        yield name, kind, m
-                        break
+    #def filter_filelist(self):
+    #    "Trim file lists extracting only 'interesting' files"
+    #    log.info("%s: filtering file list", self.name)
+    #    def do_filter():
+    #        for name, fname in read_filelist(os.path.join(self.root, "files.gz")):
+    #            for kind, matcher in CONTENT_INFO.iteritems():
+    #                m = matcher.match(fname)
+    #                if m:
+    #                    yield name, kind, m
+    #                    break
 
-        # Read dist content information
-        contents = dict()
-        out = open(os.path.join(self.root, "interesting-files"), "w")
-        for pkg, kind, fname in do_filter():
-            print >>out, pkg, kind, fname
-        out.close()
+    #    # Read dist content information
+    #    contents = dict()
+    #    out = open(os.path.join(self.root, "interesting-files"), "w")
+    #    for pkg, kind, fname in do_filter():
+    #        print >>out, pkg, kind, fname
+    #    out.close()
 
     def index(self):
         "Rebuild the Xapian index for this distro"
@@ -83,13 +87,14 @@ class Distro(object):
         pkgs = self.all_packages()
         log.info("%s: %d packages", self.name, len(pkgs))
 
-        if not os.path.exists(os.path.join(os.path.join(self.root, "interesting-files"))):
-            self.filter_filelist()
+        #if not os.path.exists(os.path.join(os.path.join(self.root, "interesting-files"))):
+        #    self.filter_filelist()
 
         # Read package contents information
         contents = dict()
         contents_stats = dict()
-        for line in open(os.path.join(self.root, "interesting-files")):
+        fname = os.path.join(self.root, "interesting-files")
+        for line in self.open_possibly_compressed(fname):
             pkg, kind, fname = line.strip().split(None, 2)
             if kind == 'desktop' and fname.lower().startswith("fedora-"):
                 fname = fname[7:]
