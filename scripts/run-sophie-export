@@ -24,5 +24,5 @@ nice ionice -c3 ./sophie-export \
 
 # Send the results to paganini.debian.org
 cd $DATADIR
-rsync -rt sophie/* dde@paganini.debian.org:/srv/dde.debian.net/web/exports/sophie/ > $LOGFILE 2>&1
+rsync -rt sophie/* dde@paganini.debian.org:/srv/dde.debian.net/home/distromatch/data/ > $LOGFILE 2>&1
 #tar -C $DATADIR/out -zcf - . | ssh dde@paganini.debian.org "sophie"
