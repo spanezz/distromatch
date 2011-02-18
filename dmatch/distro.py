@@ -52,7 +52,12 @@ class Distro(object):
 
     def all_packages(self):
         "Return the set of all binary packages in this distro"
-        return set([x.strip().split()[0] for x in open(os.path.join(self.root, "binsrc"))])
+        fname = os.path.join(self.root, "binsrc")
+        if os.path.exists(fname):
+            infd = open(fname)
+        elif os.path.exists(fname + ".gz"):
+            infd = GzipFile(fname + ".gz", "r")
+        return set([x.strip().split()[0] for x in infd])
 
     def filter_filelist(self):
         "Trim file lists extracting only 'interesting' files"

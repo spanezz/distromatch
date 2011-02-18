@@ -1,0 +1,28 @@
+#!/bin/bash
+
+set -ue
+
+DATADIR=/home/enrico/export
+BINDIR=/home/enrico/distromatch/scripts
+LOGFILE=$DATADIR/log/sophie-export-`date +%Y%m%d`.log
+
+# Create cache dir in case it's missing
+mkdir -p $DATADIR/cache
+
+# Perform the export
+
+# We need to run this from $BINDIR to satisfy relative paths in python module
+# loading
+cd $BINDIR
+nice ionice -c3 ./sophie-export \
+                  --outdir=$DATADIR/sophie \
+                  --cachedir=$DATADIR/cache \
+                  --verbose 2>> $LOGFILE
+
+# Cleanup cache to free disk space
+#rm -rf $DATADIR/cache
+
+# Send the results to paganini.debian.org
+cd $DATADIR
+rsync -rt sophie/* dde@paganini.debian.org:/srv/dde.debian.net/web/exports/sophie/ > $LOGFILE 2>&1
+#tar -C $DATADIR/out -zcf - . | ssh dde@paganini.debian.org "sophie"
