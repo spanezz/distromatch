@@ -63,6 +63,11 @@ class Distro(object):
         fname = os.path.join(self.root, "binsrc")
         return set([x.strip().split()[0] for x in self.open_possibly_compressed(fname)])
 
+    def all_packages_binsrc(self):
+        "Return the set of all binary packages in this distro"
+        fname = os.path.join(self.root, "binsrc")
+        return set([x.strip().split() for x in self.open_possibly_compressed(fname)])
+
     #def filter_filelist(self):
     #    "Trim file lists extracting only 'interesting' files"
     #    log.info("%s: filtering file list", self.name)
@@ -84,7 +89,7 @@ class Distro(object):
     def index(self):
         "Rebuild the Xapian index for this distro"
         log.info("%s: indexing data", self.name)
-        pkgs = self.all_packages()
+        pkgs = self.all_packages_binsrc()
         log.info("%s: %d packages", self.name, len(pkgs))
 
         #if not os.path.exists(os.path.join(os.path.join(self.root, "interesting-files"))):
@@ -111,12 +116,13 @@ class Distro(object):
         db = xapian.WritableDatabase(self.dbpath, xapian.DB_CREATE_OR_OVERWRITE)
 
         stem_stats = dict([(x, 0) for x in self.stemmers])
-        for name in pkgs:
+        for name, srcname in pkgs:
             doc = xapian.Document()
             doc.set_data(name)
             lname = name.lower()
             # Package name term
             doc.add_term("XP"+lname)
+            doc.add_term("XPS"+srcname)
 
             # Add stemmed forms of the package name
             for pfx in self.stemmers:

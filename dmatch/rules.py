@@ -123,6 +123,7 @@ CONTENT_INFO = {
 
 PREFIX_DOC = {
     "XP": "package name",
+    "XPS": "source package name",
     "ZDL": "development library name",
     "ZSL": "shared library name",
     "ZPL": "perl module name",
