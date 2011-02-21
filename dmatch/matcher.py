@@ -43,6 +43,9 @@ class ByName(Method):
             return [name]
         return []
 
+    def get_doc(self):
+        return "match packages by name"
+
 class ByStemmer(Method):
     """
     Match packages by stemming their names
@@ -50,6 +53,9 @@ class ByStemmer(Method):
     def __init__(self, pfx):
         self.name = "stem_" + pfx
         self.pfx = pfx
+
+    def get_doc(self):
+        return "match stemmed form of %s" % PREFIX_DOC[self.pfx]
 
     def prepare(self, name, d_from):
         return [self.pfx + s for s in d_from.stem(name, self.pfx)]
@@ -77,6 +83,9 @@ class ByContents(Method):
         """
         self.name = "file_" + kind
         self.kind = kind
+
+    def get_doc(self):
+        return "match packages by %s in contents" % CONTENT_INFO[self.kind].desc
 
     def prepare(self, name, d_from):
         # Get the package info in the starting distro
@@ -186,8 +195,7 @@ class Matcher(object):
         "Print statistics about the matching operations so far"
         print >>out, "%d packages tested" % self.count_all
         print >>out, "Founds by method:"
-        for m, meth in self.methods:
-            doc = getattr(self, "match_" + m).__doc__
-            print >>out, "%d matched by %s" % (self.counts[m], doc)
+        for meth in self.methods:
+            print >>out, "%d matched by %s" % (self.counts[meth.name], meth.get_doc())
         for i in range(len(self.distros)+1):
             print >>out, "%d matched %d distro%s" % (self.count_matchcounts[i], i, 's' if i != 1 else '')

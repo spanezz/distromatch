@@ -78,6 +78,7 @@ class ContentMatch(object):
     def __init__(self, pfx, desc=None, match=None, sophie=None):
         self.pfx = pfx
         self.regexp = match
+        self.desc = desc
         # SQL directory filter(s) (ORed togheter) to use when querying file
         # names from Sophie. BEWARE: they will not be SQL-escaped and will be
         # used as is
