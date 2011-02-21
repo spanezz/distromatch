@@ -75,9 +75,9 @@ STEMMERS = {
 }
 
 class ContentMatch(object):
-    def __init__(self, pfx, regexp, sophie=None):
+    def __init__(self, pfx, desc=None, match=None, sophie=None):
         self.pfx = pfx
-        self.regexp = regexp
+        self.regexp = match
         # SQL directory filter(s) (ORed togheter) to use when querying file
         # names from Sophie. BEWARE: they will not be SQL-escaped and will be
         # used as is
@@ -90,34 +90,26 @@ class ContentMatch(object):
 
 # What we consider interesting in package contents lists
 CONTENT_INFO = {
-        # .desktop files
-        'desktop': ContentMatch('XFD',
-            re.compile(r"^[./]*usr/share/applications/(.+\.desktop)$"),
+        'desktop': ContentMatch('XFD', desc=".desktop files",
+            match=re.compile(r"^[./]*usr/share/applications/(.+\.desktop)$"),
             sophie=dict(like=["/usr/share/applications/%"])),
-        # executable commands
-        'bin': ContentMatch('XFB',
-            re.compile(r"^[./]*(?:usr/)bin/(.+)$"),
+        'bin': ContentMatch('XFB', desc="executable commands",
+            match=re.compile(r"^[./]*(?:usr/)bin/(.+)$"),
             sophie=dict(eq=["/usr/bin/", "/bin/"])),
-        # pkg-config metadata
-        'pc': ContentMatch('XFPC',
-            re.compile(r"^.+/pkgconfig/(.+)\.pc$"),
+        'pc': ContentMatch('XFPC', desc="pkg-config metadata",
+            match=re.compile(r"^.+/pkgconfig/(.+)\.pc$"),
             sophie=dict(eq=["/usr/share/pkgconfig/", "/usr/lib/pkgconfig/", "/usr/lib32/pkgconfig/", "/usr/lib64/pkgconfig/"])),
-        # shared library info
-        'shlib': ContentMatch('XFSL',
-            re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$"),
+        'shlib': ContentMatch('XFSL', desc="shared library info",
+            match=re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$"),
             sophie=dict(eq=["/usr/lib/", "/usr/lib32/", "/usr/lib64/", "/lib/", "/lib32/", "/lib64/"])),
-        # devel library info
-        'devlib': ContentMatch('XFDL',
-            re.compile(r"^[./]*usr/lib\d*/(.+)\.a$"),
+        'devlib': ContentMatch('XFDL', desc="devel library info",
+            match=re.compile(r"^[./]*usr/lib\d*/(.+)\.a$"),
             sophie=dict(eq=["/usr/lib/", "/usr/lib64/"])),
-# TODO: sophie SQL queries hand-checked only until here
-        # manpages
-        'man': ContentMatch('XFMAN',
-            re.compile(r"[./]*usr/share/man/(.+)$"),
+        'man': ContentMatch('XFMAN', desc="manpages",
+            match=re.compile(r"[./]*usr/share/man/(.+)$"),
             sophie=dict(like=["/usr/share/man/%"])),
-        # python modules
-        'py': ContentMatch('XFPY',
-            re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$"),
+        'py': ContentMatch('XFPY', desc="python modules",
+            match=re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$"),
             sophie=dict(like=["/usr/%/python%/site-packages/%"])),
 }
 
