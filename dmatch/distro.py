@@ -66,7 +66,7 @@ class Distro(object):
     def all_packages_binsrc(self):
         "Return the set of all binary packages in this distro"
         fname = os.path.join(self.root, "binsrc")
-        return set([x.strip().split() for x in self.open_possibly_compressed(fname)])
+        return set([tuple(x.strip().split()) for x in self.open_possibly_compressed(fname)])
 
     #def filter_filelist(self):
     #    "Trim file lists extracting only 'interesting' files"
