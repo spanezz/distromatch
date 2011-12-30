@@ -69,6 +69,8 @@ echo "Archive the whole distromatch dataset"
 cd $ROOT
 tar -zcf $WEBDIR/distromatch-all.tar.gz.tmp dist-*/binsrc* dist-*/style dist-*/interesting-files*
 mv $WEBDIR/distromatch-all.tar.gz.tmp $WEBDIR/distromatch-all.tar.gz
+mkdir -p $WEBDIR/distromatch
+tar -C $WEBDIR/distromatch -xf $WEBDIR/distromatch-all.tar.gz
 
 echo "Reindex with distromatch"
 $SCRIPTDIR/../distromatch --verbose --reindex --datadir=$ROOT
