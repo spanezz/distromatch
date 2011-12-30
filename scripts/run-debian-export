@@ -27,6 +27,11 @@ import time
 import logging
 import psycopg2
 import gzip
+import urllib
+import calendar
+import subprocess
+import cPickle as pickle
+from cStringIO import StringIO
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +60,107 @@ class Binsrc(object):
 
         for pkg, src in c:
             yield pkg, src
+
+class IntFiles(object):
+    def __init__(self, cachedir):
+        self.cachedir = cachedir
+
+    def cached(self, url, processor):
+        """
+        Run @processor on the contents of @url, caching the results and reusing the
+        cached results if the url contents have not changed
+        """
+        zfd = urllib.urlopen(url)
+
+        # Get the file timestamp
+        # FIXME: timezone conversion may happen here, since parsedate documentation
+        # doesn't mention timezones
+        ts = calendar.timegm(email.utils.parsedate(zfd.info()["Last-modified"]))
+
+        # Check if we have the data in cache
+        name = re.sub(r"[^a-zA-Z0-9_.-]", "_", url)
+        cachefile = os.path.join(self.cachedir, name)
+        try:
+            cachefile_ts = os.path.getmtime(cachefile)
+        except Exception, e:
+            cachefile_ts = 0
+        if cachefile_ts >= ts:
+            # Read from cache
+            log.info("%s: read from cache", url)
+            return pickle.load(gzip.GzipFile(cachefile, "r"))
+
+        # Not found in cache: read the real data
+        log.info("%s: recomputing", url)
+
+        # Open through gunzipper
+        # FIXME: see http://www.enricozini.org/2011/cazzeggio/python-gzip/
+        #        for why there is such a stupid thing as a StringIO(zfd.read())
+        #        here.
+        fd = gzip.GzipFile(mode="r", fileobj=StringIO(zfd.read()))
+
+        # Run the processor
+        res = processor(fd)
+
+        # Save the processed data in cache
+        out = gzip.GzipFile(cachefile, mode="w")
+        pickle.dump(res, out, pickle.HIGHEST_PROTOCOL)
+        out.close()
+        # Set file timestamp to ts
+        os.utime(cachefile, (ts, ts))
+
+        # Return the results
+        return res
+
+    def contentfiles(self, srcdir):
+        fname = os.path.join(srcdir, "contentfiles")
+        if not os.path.exists(fname):
+            return
+
+        if os.access(fname, os.X_OK):
+            proc = subprocess.Popen([fname], stdout=subprocess.PIPE)
+            for line in proc.stdout:
+                yield line.strip()
+            if proc.wait() != 0:
+                raise RuntimeError("%s exited with %d error code",
+                                   fname, proc.returncode)
+        else:
+            with open(fname, "r") as fd:
+                for line in fd:
+                    yield line.strip()
+
+    def parse_contents(self, fd):
+        "Generate pkg,file couples from a Debian Contents-$ARCH file"
+        for line in fd:
+            if line.startswith("FILE"): break
+        for line in fd:
+            line = line[:-1]
+            try:
+                file, pkg = line.rsplit(None, 1)
+                pkg = pkg.rsplit('/', 1)[1]
+            except:
+                continue
+            yield pkg, file
+
+    def read_contents(self, fd):
+        """
+        Read Contents-$ARCH data from the given file descriptor
+        and return its contents into a set((binpkgname, kind, path))
+        """
+        count_read = 0
+        count_matched = 0
+        tgt = set()
+        for pkg, fname in parse_contents(fd):
+            # Select content
+            for kind, matcher in dmatch.CONTENT_INFO.iteritems():
+                m = matcher.match(fname)
+                if m:
+                    tgt.add((pkg, kind, m))
+                    count_matched += 1
+            count_read += 1
+            if count_read % 1000000 == 0:
+                log.info("%s:%dk paths read, %d paths matched", url, count_read/1000, count_matched)
+        return tgt
+
 
 
 if __name__ == "__main__":
@@ -107,6 +213,7 @@ if __name__ == "__main__":
     now = time.time()
 
     binsrc = Binsrc()
+    intfiles = IntFiles(opts.cachedir)
 
     for d in os.listdir(opts.rootdir):
         mo = re.match(r"^dist-(debian|ubuntu)-(.+)", d)
@@ -135,25 +242,22 @@ if __name__ == "__main__":
                 print >>gzfd, bin, src
             gzfd.close()
 
-        # TODO FN_CONTENTFILES=$source/contentfiles
-        # TODO FN_INTFILES=$source/interesting-files.gz
+        # Generate interesting-files from Debian-style Content-* files
 
-        # TODO # Generate interesting-files from Debian-style Content-* files
-        # TODO if [ -f $FN_CONTENTFILES ]
-        # TODO then
-        # TODO     progress "Updating file lists in $source..."
-        # TODO     if [ -x $FN_CONTENTFILES ]
-        # TODO     then
-        # TODO         $SCRIPTDIR/debian-mkfiles $($FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
-        # TODO     else
-        # TODO         $SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
-        # TODO     fi
-        # TODO     mv $FN_INTFILES.tmp $FN_INTFILES
-        # TODO fi
+        # Merged pkg->set(files) dist
+        merged = set()
 
-        # TODO name=$(basename $source)
-        # TODO name=${name#dist-}
+        # Read and merge all info
+        for url in intfiles.contentfiles(sourcedir):
+            info = intfiles.cached(url, intfiles.read_contents)
+            merged |= info
 
+        # Save the merged lists
+        with utils.atomic_writer(os.path.join(sourcedir, "interesting-files.gz")) as fd:
+            gzfd = gzip.GzipFile("interesting-files", "w", fd)
+            for pkg, kind, path in sorted(merged):
+                print >>gzfd, pkg, kind, path
+            gzfd.close()
 
         # Touch the last_update file to indicate when we ran
         with open(fn_last_update, "w"):
