@@ -1,0 +1,7 @@
+db/
+*.gz
+last_update
+style
+up-to-date
+/dist-[acfmops]*
+/dist-unitylinux*
