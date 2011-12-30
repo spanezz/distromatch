@@ -1,0 +1,12 @@
+#!/bin/sh
+
+dist=maverick
+
+for arch in amd64 i386
+do
+	echo http://ftp.ubuntu.com/ubuntu/dists/$dist/Contents-$arch.gz
+	for flav in backports proposed security updates
+	do
+		echo http://ftp.ubuntu.com/ubuntu/dists/$dist-$flav/Contents-$arch.gz
+	done
+done

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec ls /srv/ftp.debian.org/ftp/dists/sid/Contents-*.gz
