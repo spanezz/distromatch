@@ -19,6 +19,29 @@ progress() {
 	echo "$@"
 }
 
+# Merge binsrc and interesting file lists
+# First arg is the destination dir
+# All other args are the dirs to merge into it
+merge_datadirs() {
+	TARGET="$1"
+	shift
+
+	for fname in binsrc interesting-files
+	do
+		(
+			for dir in "$@"
+			do
+				if [ -f "$dir/$fname.gz" ]; then
+					zcat "$dir/$fname.gz"
+				else
+					cat "$dir/$fname"
+				fi
+			done
+		) | sort -u | gzip > $TARGET/$fname.gz.tmp
+		mv $TARGET/$fname.gz.tmp $TARGET/$fname.gz
+	done
+}
+
 # Do consolidation and reindexing
 
 ROOT=$(readlink -f ${1:?"Usage: %0 rootdir"})
@@ -39,7 +62,7 @@ do
 
 	# Redo the merge
 	echo "Merge $SUBS into $source"
-	$SCRIPTDIR/merge-data-dirs $source $SUBS
+	merge_datadirs $source $SUBS
 done
 
 echo "Archive the whole distromatch dataset"
