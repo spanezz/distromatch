@@ -29,6 +29,7 @@ import psycopg2
 import gzip
 import urllib
 import calendar
+import email.utils
 import subprocess
 import cPickle as pickle
 from cStringIO import StringIO
@@ -149,7 +150,7 @@ class IntFiles(object):
         count_read = 0
         count_matched = 0
         tgt = set()
-        for pkg, fname in parse_contents(fd):
+        for pkg, fname in self.parse_contents(fd):
             # Select content
             for kind, matcher in dmatch.CONTENT_INFO.iteritems():
                 m = matcher.match(fname)
@@ -182,8 +183,8 @@ if __name__ == "__main__":
     from dmatch import utils
 
     # Compute config defaults
-    datadir = os.path.absname(os.path.join(scriptdir, "..", "data"))
-    cachedir = os.path.absname(os.path.join(scriptdir, "..", "cache"))
+    datadir = os.path.abspath(os.path.join(scriptdir, "..", "data"))
+    cachedir = os.path.abspath(os.path.join(scriptdir, "..", "cache"))
 
     parser = Parser(usage="usage: %prog [options]",
                     version="%prog "+ VERSION,
@@ -215,13 +216,13 @@ if __name__ == "__main__":
     binsrc = Binsrc()
     intfiles = IntFiles(opts.cachedir)
 
-    for d in os.listdir(opts.rootdir):
+    for d in os.listdir(opts.datadir):
         mo = re.match(r"^dist-(debian|ubuntu)-(.+)", d)
         if not mo: continue
         dist = mo.group(1)
         release = mo.group(2)
 
-        sourcedir = os.path.join(opts.rootdir, d)
+        sourcedir = os.path.join(opts.datadir, d)
 
         # Get the time this source was last updated
         fn_last_update = os.path.join(sourcedir, "last_update")
@@ -235,14 +236,15 @@ if __name__ == "__main__":
             log.info("Skipping %s, which is only %.1fh old", d, (now - lastrun)/3600.0)
             continue
 
-        # Generate bin<->src mapping
+        log.info("Building binary<->sources mappings for %s %s (reading from UDD)", dist, release)
+
         with utils.atomic_writer(os.path.join(sourcedir, "binsrc.gz")) as fd:
-            gzfd = gzip.GzipFile("binsrc", "w", fd)
+            gzfd = gzip.GzipFile("binsrc", "w", fileobj=fd)
             for bin, src in binsrc.get(dist, release):
                 print >>gzfd, bin, src
             gzfd.close()
 
-        # Generate interesting-files from Debian-style Content-* files
+        log.info("Building interesting-files list for %s %s", dist, release)
 
         # Merged pkg->set(files) dist
         merged = set()
@@ -254,7 +256,7 @@ if __name__ == "__main__":
 
         # Save the merged lists
         with utils.atomic_writer(os.path.join(sourcedir, "interesting-files.gz")) as fd:
-            gzfd = gzip.GzipFile("interesting-files", "w", fd)
+            gzfd = gzip.GzipFile("interesting-files", "w", fileobj=fd)
             for pkg, kind, path in sorted(merged):
                 print >>gzfd, pkg, kind, path
             gzfd.close()
