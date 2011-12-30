@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/python
 
 # distromatch - Match binary package names across distributions
 #
@@ -17,78 +17,144 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-set -ue
+# Update all Debian distromatch sources
 
-#if [ -t STDOUT ]
-#then
-#	progress() {
-#		echo "$@"
-#	}
-#else
-#	progress() {
-#		:
-#	}
-#fi
+import sys
+import os
+import os.path
+import re
+import time
+import logging
+import psycopg2
+import gzip
 
-# We are run with output redirected to a logfile, so we should always output
-# our progess
-progress() {
-	echo "$@"
-}
+log = logging.getLogger(__name__)
 
-# Update all distromatch sources in the given directory
+class Binsrc(object):
+    def __init__(self):
+        self.db = psycopg2.connect(host="localhost",port=5441,user="guest",database="udd")
 
-ROOT=${1:?"Usage: %0 rootdir cachedir"}
-SCRIPTDIR=$(dirname $0)
-CACHEDIR=${2:-"./cache"}
-export CACHEDIR
+    def get(self, dist=None, release=None):
+        """
+        Generate (bin, src) couples with binary-source package mappings for the
+        given distribution and release
+        """
+        c = self.db.cursor()
 
-mkdir -p $CACHEDIR
-touch -d "2 days ago" $CACHEDIR/rebuild-threshold
+        if dist is None:
+            c.execute("SELECT DISTINCT package, source FROM all_packages"
+                      " ORDER BY package, source")
+        elif release is None:
+            c.execute("SELECT DISTINCT package, source FROM all_packages"
+                      " WHERE distribution=%s"
+                      " ORDER BY package, source", (dist,))
+        else:
+            c.execute("SELECT DISTINCT package, source FROM all_packages"
+                      " WHERE distribution=%s and release=%s"
+                      " ORDER BY package, source", (dist, release))
 
-for source in $ROOT/dist-debian-* $ROOT/dist-ubuntu-*
-do
-	FN_UPTODATE=$source/last_update
-	FN_CONTENTFILES=$source/contentfiles
-	FN_INTFILES=$source/interesting-files.gz
-	FN_BINSRC=$source/binsrc.gz
+        for pkg, src in c:
+            yield pkg, src
 
-	# Skip if up to date
-	test $FN_UPTODATE -nt $CACHEDIR/rebuild-threshold && continue
 
-	# Generate interesting-files from Debian-style Content-* files
-	if [ -f $FN_CONTENTFILES ]
-	then
-		progress "Updating file lists in $source..."
-		if [ -x $FN_CONTENTFILES ]
-		then
-			$SCRIPTDIR/debian-mkfiles $($FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
-		else
-			$SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
-		fi
-		mv $FN_INTFILES.tmp $FN_INTFILES
-	fi
+if __name__ == "__main__":
+    from optparse import OptionParser
 
-	name=$(basename $source)
-	name=${name#dist-}
+    VERSION="0.1"
 
-	# Try generating package lists for Debian distributions
-	release=${name#debian-}
-	if [ "$release" != "$name" ]
-	then
-		progress "Updating package lists in $source..."
-		$SCRIPTDIR/debian-mkbinsrc debian $release | gzip > $FN_BINSRC.tmp
-		mv $FN_BINSRC.tmp $FN_BINSRC
-	fi
+    class Parser(OptionParser):
+        def error(self, msg):
+            sys.stderr.write("%s: error: %s\n\n" % (self.get_prog_name(), msg))
+            self.print_help(sys.stderr)
+            sys.exit(2)
 
-	# Try generating package lists for Ubuntu distributions
-	release=${name#ubuntu-}
-	if [ "$release" != "$name" ]
-	then
-		progress "Updating package lists in $source..."
-		$SCRIPTDIR/debian-mkbinsrc ubuntu $release | gzip > $FN_BINSRC.tmp
-		mv $FN_BINSRC.tmp $FN_BINSRC
-	fi
+    scriptdir = os.path.dirname(sys.argv[0])
 
-	touch $FN_UPTODATE
-done
+    # FIXME: I hate messing with sys.path
+    sys.path.append(os.path.abspath(os.path.join(scriptdir, "..")))
+    import dmatch
+    from dmatch import utils
+
+    # Compute config defaults
+    datadir = os.path.absname(os.path.join(scriptdir, "..", "data"))
+    cachedir = os.path.absname(os.path.join(scriptdir, "..", "cache"))
+
+    parser = Parser(usage="usage: %prog [options]",
+                    version="%prog "+ VERSION,
+                    description="Update all Debian distromatch sources")
+    parser.add_option("-q", "--quiet", action="store_true",
+                      help="quiet mode: only output warnings and errors")
+    parser.add_option("--datadir", action="store", metavar="dir", default=datadir,
+                      help="pathname to the data directory, where dist-* dirs are located"
+                           " (default: %default)")
+    parser.add_option("--cachedir", action="store", metavar="dir", default=cachedir,
+                      help="pathname to the cache directory, intermediate results are stored"
+                           " between update runs (default: %default)")
+    (opts, args) = parser.parse_args()
+
+    FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
+    if opts.quiet:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format=FORMAT)
+    else:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=FORMAT)
+
+    # TODO export CACHEDIR
+
+    if not os.path.isdir(opts.cachedir):
+        os.makedirs(opts.cachedir)
+
+    # TODO touch -d "2 days ago" $CACHEDIR/rebuild-threshold
+    now = time.time()
+
+    binsrc = Binsrc()
+
+    for d in os.listdir(opts.rootdir):
+        mo = re.match(r"^dist-(debian|ubuntu)-(.+)", d)
+        if not mo: continue
+        dist = mo.group(1)
+        release = mo.group(2)
+
+        sourcedir = os.path.join(opts.rootdir, d)
+
+        # Get the time this source was last updated
+        fn_last_update = os.path.join(sourcedir, "last_update")
+        if os.path.exists(fn_last_update):
+            lastrun = os.path.getmtime(fn_last_update)
+        else:
+            lastrun = 0
+
+        # Skip if it is quite up to date
+        if now - lastrun < 86400 * 2:
+            log.info("Skipping %s, which is only %.1fh old", d, (now - lastrun)/3600.0)
+            continue
+
+        # Generate bin<->src mapping
+        with utils.atomic_writer(os.path.join(sourcedir, "binsrc.gz")) as fd:
+            gzfd = gzip.GzipFile("binsrc", "w", fd)
+            for bin, src in binsrc.get(dist, release):
+                print >>gzfd, bin, src
+            gzfd.close()
+
+        # TODO FN_CONTENTFILES=$source/contentfiles
+        # TODO FN_INTFILES=$source/interesting-files.gz
+
+        # TODO # Generate interesting-files from Debian-style Content-* files
+        # TODO if [ -f $FN_CONTENTFILES ]
+        # TODO then
+        # TODO     progress "Updating file lists in $source..."
+        # TODO     if [ -x $FN_CONTENTFILES ]
+        # TODO     then
+        # TODO         $SCRIPTDIR/debian-mkfiles $($FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+        # TODO     else
+        # TODO         $SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+        # TODO     fi
+        # TODO     mv $FN_INTFILES.tmp $FN_INTFILES
+        # TODO fi
+
+        # TODO name=$(basename $source)
+        # TODO name=${name#dist-}
+
+
+        # Touch the last_update file to indicate when we ran
+        with open(fn_last_update, "w"):
+            pass
