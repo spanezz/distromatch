@@ -5,7 +5,7 @@ ROOTDIR=/srv/dde.debian.net/home/distromatch
 cd $ROOTDIR
 
 # Rebuild Debian info
-scripts/run-debian-export data cache
+scripts/run-debian-export
 
 # Update indices
 scripts/run-reindex data
