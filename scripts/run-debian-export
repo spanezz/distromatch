@@ -43,7 +43,12 @@ do
 	if [ -f $FN_CONTENTFILES ]
 	then
 		progress "Updating file lists in $source..."
-		$SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+		if [ -x $FN_CONTENTFILES ]
+		then
+			$SCRIPTDIR/debian-mkfiles $($FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+		else
+			$SCRIPTDIR/debian-mkfiles $(cat $FN_CONTENTFILES) | gzip > $FN_INTFILES.tmp
+		fi
 		mv $FN_INTFILES.tmp $FN_INTFILES
 	fi
 

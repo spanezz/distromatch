@@ -21,8 +21,8 @@ progress() {
 
 # Do consolidation and reindexing
 
-ROOT=${1:?"Usage: %0 rootdir"}
-SCRIPTDIR=$(dirname $0)
+ROOT=$(readlink -f ${1:?"Usage: %0 rootdir"})
+SCRIPTDIR=$(readlink -f $(dirname $0))
 WEBDIR=/srv/dde.debian.net/web/exports/
 
 echo "Rebuild merged distro indices"
