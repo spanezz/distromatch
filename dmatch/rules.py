@@ -83,8 +83,8 @@ STEMMERS = {
                      REStemmer('^(?:lib)?(.+?)[.0-9_-]*-devel$'),
                    ],
             'ZSL': [
-                     REStemmer('^(.+?)-libs$'),
-                     REStemmer('^(.+?)[.0-9_-]*-libs$'),
+                     REStemmer('^lib(.+?\d)$'),
+                     REStemmer('^lib(.+?)[.0-9_-]+$'),
                    ],
             'ZPL': [ CPANStemmer('^perl-(.+)$'), ],
             'ZPY': [ REStemmer('^python-(.+)$'), ],
