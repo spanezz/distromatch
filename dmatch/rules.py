@@ -92,7 +92,7 @@ STEMMERS = {
 }
 
 class ContentMatch(object):
-    def __init__(self, pfx, desc=None, match=None, sophie=None):
+    def __init__(self, pfx, desc=None, match=None, sophie=None, rpm_md=None):
         self.pfx = pfx
         self.regexp = match
         self.desc = desc
@@ -100,6 +100,7 @@ class ContentMatch(object):
         # names from Sophie. BEWARE: they will not be SQL-escaped and will be
         # used as is
         self.sophie = sophie
+        self.rpm_md = rpm_md
 
     def match(self, fname):
         mo = self.regexp.match(fname)
@@ -116,10 +117,12 @@ CONTENT_INFO = {
             sophie=dict(eq=["/usr/bin/", "/bin/"])),
         'pc': ContentMatch('XFPC', desc="pkg-config metadata",
             match=re.compile(r"^.+/pkgconfig/(.+)\.pc$"),
-            sophie=dict(eq=["/usr/share/pkgconfig/", "/usr/lib/pkgconfig/", "/usr/lib32/pkgconfig/", "/usr/lib64/pkgconfig/"])),
+            sophie=dict(eq=["/usr/share/pkgconfig/", "/usr/lib/pkgconfig/", "/usr/lib32/pkgconfig/", "/usr/lib64/pkgconfig/"]),
+            rpm_md=re.compile(r"^pkgconfig\((.+)\)$")),
         'shlib': ContentMatch('XFSL', desc="shared library info",
             match=re.compile(r"^[./]*(?:usr/)?lib\d*/(lib.+\.so\.\d+).*$"),
-            sophie=dict(eq=["/usr/lib/", "/usr/lib32/", "/usr/lib64/", "/lib/", "/lib32/", "/lib64/"])),
+            sophie=dict(eq=["/usr/lib/", "/usr/lib32/", "/usr/lib64/", "/lib/", "/lib32/", "/lib64/"]),
+            rpm_md=re.compile(r"^(lib.+\.so\.\d+)$")),
         'devlib': ContentMatch('XFDL', desc="devel library info",
             match=re.compile(r"^[./]*usr/lib\d*/(.+)\.a$"),
             sophie=dict(eq=["/usr/lib/", "/usr/lib64/"])),

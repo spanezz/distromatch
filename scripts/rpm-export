@@ -1,0 +1,419 @@
+#!/usr/bin/python
+# vim: set ts=4 sw=4 et: coding=UTF-8
+
+# Export distromatcher input information from a rpm-md repo.
+# See: http://www.enricozini.org/2011/debian/distromatch/
+
+# distromatch - Match binary package names across distributions
+#
+# Copyright (C) 2012 SUSE
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+__author__ = "Vincent Untz <vuntz@opensuse.org>"
+__license__ = """
+    Copyright (C) 2012 Vincent Untz <vuntz@opensuse.org>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+"""
+VERSION = "0.1"
+
+import os
+import sys
+
+import gzip
+import optparse
+import re
+
+try:
+    from lxml import etree as ET
+except ImportError:
+    try:
+        from xml.etree import cElementTree as ET
+    except ImportError:
+        import cElementTree as ET
+
+# FIXME: I hate messing with sys.path
+sys.path.append("..")
+import dmatch.rules
+
+RPM_MD_NS='{http://linux.duke.edu/metadata/common}'
+RPM_MD_NS_RPM='{http://linux.duke.edu/metadata/rpm}'
+
+KNOWN_METADATA_TYPE = ['rpm-md', 'yast2']
+
+
+class RpmMdException(Exception):
+    pass
+class Yast2Exception(Exception):
+    pass
+
+
+class DistOutput(object):
+    def __init__(self, outdir, tag, style):
+        d = os.path.join(outdir, "dist-" + tag)
+        if not os.path.exists(d):
+            os.mkdir(d)
+        self.fn_style = os.path.join(d, "style")
+        self.fn_binsrc = os.path.join(d, "binsrc.gz")
+        self.fn_files = os.path.join(d, "interesting-files.gz")
+        self.of_style = open(self.fn_style + ".tmp", "w")
+        self.of_binsrc = gzip.GzipFile(self.fn_binsrc + ".tmp", "w")
+        self.of_files = gzip.GzipFile(self.fn_files + ".tmp", "w")
+
+        print >>self.of_style, style
+
+    def close(self):
+        self.of_style.close()
+        self.of_binsrc.close()
+        self.of_files.close()
+        os.rename(self.fn_style + ".tmp", self.fn_style)
+        os.rename(self.fn_binsrc + ".tmp", self.fn_binsrc)
+        os.rename(self.fn_files + ".tmp", self.fn_files)
+
+
+class Package(object):
+    def __init__(self, name, arch, src_package, provides, files, files_in_provides=False):
+        self.name = name
+        self.arch = arch
+        self.src_package = src_package
+        self.interesting = set()
+
+        if provides:
+            for provide in provides:
+                self._match_interesting_for_provides(provide, files_in_provides)
+        if files:
+            for filename in files:
+                self._match_interesting_for_file(filename)
+
+    def _match_interesting_for_provides(self, provide, files_in_provides):
+        result = None
+        for kind, matcher in dmatch.rules.CONTENT_INFO.iteritems():
+            if matcher.rpm_md:
+                match = matcher.rpm_md.match(provide)
+                if match:
+                    result = match.group(1)
+                    break
+
+        if result:
+            self.interesting.add((kind, result))
+        elif files_in_provides:
+            self._match_interesting_for_file(provide)
+
+    def _match_interesting_for_file(self, filename):
+        result = None
+        for kind, matcher in dmatch.rules.CONTENT_INFO.iteritems():
+            result = matcher.match(filename)
+            if result:
+                break
+
+        if result:
+            self.interesting.add((kind, result))
+
+
+class Metadata(object):
+    def __init__(self, skip_arches=['src', 'x86_64'], skip_suffixes=['-32bit', '-debuginfo', '-debugsource']):
+        self.packages = []
+        self._skip_arches = skip_arches
+        self._skip_suffixes = skip_suffixes
+
+    def _append(self, package):
+        if self._should_skip_package(package):
+            return
+        self.packages.append(package)
+
+    def _should_skip_package(self, package):
+        for suffix in self._skip_suffixes:
+            if package.name.endswith(suffix):
+                return True
+        if package.arch in self._skip_arches:
+            return True
+        return False
+
+    def export_data(self, tag, style, outdir='.'):
+        of = DistOutput(outdir, tag, style)
+        for package in self.packages:
+            # Output the bin<->src mapping for this package
+            print >>of.of_binsrc, package.name, package.src_package
+
+            # Output the file list for this package
+            for kind, fname in package.interesting:
+                print >>of.of_files, package.name, kind, fname.encode("utf-8")
+
+        of.close()
+
+
+class RpmMd(Metadata):
+    sourcerpm_re = re.compile(r'(.+)-[^-]+-[^-]+.src.rpm')
+
+    def __init__(self, fin_or_path):
+        Metadata.__init__(self)
+
+        try:
+            root = ET.parse(fin_or_path).getroot()
+        except SyntaxError, e:
+            raise RpmMdException('Cannot parse metadata: %s' % (e,))
+
+        # FIXME: check that the xml matches more or less what we expect (like guess_metadata_type())  
+
+        for package_node in root.findall(RPM_MD_NS + 'package'):
+            package = self._parse_package_node(package_node)
+            self._append(package)
+
+    def _parse_package_node(self, package_node):
+        name = None
+        arch = None
+        src_package = None
+        provides = []
+        files = []
+
+        name_node = package_node.find(RPM_MD_NS + 'name')
+        if name_node is not None:
+            name = name_node.text
+        if not name:
+            raise RpmMdException('No name found for package.')
+
+        arch_node = package_node.find(RPM_MD_NS + 'arch')
+        if arch_node is not None:
+            arch = arch_node.text
+        if not arch:
+            raise RpmMdException('No arch found for package %s.', name)
+
+        format_node = package_node.find(RPM_MD_NS + 'format')
+        if format_node is None:
+            raise RpmMdException('No <format> tag for %s.' % name)
+
+        sourcerpm_node = format_node.find(RPM_MD_NS_RPM + 'sourcerpm')
+        if sourcerpm_node is not None:
+            match = self.sourcerpm_re.match(sourcerpm_node.text)
+            if match:
+                src_package = match.group(1)
+        if not src_package and arch != 'src':
+            raise RpmMdException('No source package for %s.' % name)
+
+        provides_node = format_node.find(RPM_MD_NS_RPM + 'provides')
+        if provides_node is not None:
+            for entry_node in provides_node.findall(RPM_MD_NS_RPM + 'entry'):
+                entry_name = entry_node.get('name')
+                if not entry_name:
+                    continue
+                provides.append(entry_name)
+
+        for file_node in format_node.findall(RPM_MD_NS + 'file'):
+            filename = file_node.text
+            if not filename:
+                continue
+            files.append(filename)
+
+        return Package(name, arch, src_package, provides, files)
+
+
+class Yast2(Metadata):
+    def __init__(self, path):
+        Metadata.__init__(self)
+
+        self._fin = open(path, 'r')
+        try:
+            self._fin = gzip.GzipFile(path, 'r')
+            firstline = self._fin.readline()
+        except IOError:
+            self._fin = open(path, 'r')
+            firstline = self._fin.readline()
+
+        if firstline[:-1] != '=Ver: 2.0':
+            raise Yast2Exception('File \'%s\' is not a yast2 metadata file.' % path)
+
+        self._readline()
+        while True:
+            line = self._getline()
+            if not line:
+                break
+
+            if line.startswith('=Pkg:'):
+                package = self._parse_package()
+                self._append(package)
+            else:
+                self._readline()
+
+        self._fin.close()
+
+    def _readline(self):
+        line = self._fin.readline()
+        self._line = line[:-1]
+        return self._line
+
+    def _getline(self):
+        return self._line
+
+    def _parse_pkgdata(self, text, linetype):
+        text = text[len(linetype+':'):]
+        text.strip()
+        pkg_data = text.split()
+        if len(pkg_data) != 4:
+            raise Yast2Exception('Cannot parse %s line: %s' % (linetype, line))
+        return pkg_data
+
+    def _parse_package(self):
+        name = None
+        arch = None
+        src_package = None
+        provides = []
+
+        line = self._getline()
+        if not line.startswith('=Pkg:'):
+            raise Yast2Exception('Internal error, not a =Pkg line: %s' % line)
+
+        pkg_data = self._parse_pkgdata(line, '=Pkg')
+        name = pkg_data[0]
+        arch = pkg_data[3]
+
+        in_provides = False
+        while True:
+            line = self._readline()
+            if not line or line.startswith('=Pkg:'):
+                break
+
+            if in_provides:
+                if line.startswith('-Prv:'):
+                    in_provides = False
+                    continue
+                try:
+                    line.encode("utf-8")
+                except UnicodeDecodeError, e:
+                    print >>sys.stderr, 'Skipping badly encoded provides for %s: %s' % (name, line)
+                else:
+                    provides.append(line)
+            elif line.startswith('+Prv:'):
+                in_provides = True
+                continue
+            elif line.startswith('=Src:'):
+                if src_package is not None:
+                    raise Yast2Exception('Error while parsing package %s: two =Src lines.' % name)
+                pkg_data = self._parse_pkgdata(line, '=Src')
+                src_package = pkg_data[0]
+
+        if not src_package:
+            raise Yast2Exception('No source package for %s.' % name)
+
+        return Package(name, arch, src_package, provides, None, files_in_provides=True)
+
+
+def guess_metadata_type(path):
+    try:
+        tree = ET.parse(path)
+        root = tree.getroot()
+        nsmap = root.nsmap
+        if tree.docinfo.root_name == 'metadata' and nsmap[None] == RPM_MD_NS[1:-1] and nsmap['rpm'] == RPM_MD_NS_RPM[1:-1]:
+            return 'rpm-md'
+    except (SyntaxError, KeyError):
+        pass
+
+    try:
+        f = gzip.GzipFile(path, 'r')
+        firstline = f.readline()
+    except IOError:
+        f = open(path, 'r')
+        firstline = f.readline()
+    finally:
+        f.close()
+
+    if firstline[:-1] == '=Ver: 2.0':
+        return 'yast2'
+
+    return None
+
+
+def main(args):
+    parser = optparse.OptionParser(usage="usage: %prog [options] PATH DISTRO_TAG",
+                    version="%prog "+ VERSION,
+                    description="Export distromatch info from RPM-MD/YaST2 metadata")
+    parser.add_option("--distro-style", default="auto", help="Distribution style. Default: %default")
+    parser.add_option("--metadata-type", default="auto", help="Metadata type (%s). Default: %%default" % ', '.join(KNOWN_METADATA_TYPE))
+    parser.add_option("--outdir", default=".", help="Destination directory. Default: %default")
+
+    (opts, args) = parser.parse_args()
+
+    if len(args) != 2:
+        print >>sys.stderr, 'No file metadata passed as argument.'
+        sys.exit(1)
+
+    path = args[0]
+    distro_tag = args[1]
+
+    if not os.path.exists(path):
+        print >>sys.stderr, '\'%s\' does not exist.' % path
+        sys.exit(1)
+
+    if opts.distro_style != 'auto' and opts.distro_style not in dmatch.rules.STEMMERS.keys():
+        print >>sys.stderr, 'Unknown distribution style \'%s\'.' % opts.distro_style
+        values = list(dmatch.rules.STEMMERS.keys())
+        values.sort()
+        print >>sys.stderr, 'Please use one of: %s.' % ', '.join(values)
+        sys.exit(1)
+
+    if opts.metadata_type != 'auto' and opts.metadata_type not in KNOWN_METADATA_TYPE:
+        print >>sys.stderr, 'Unknown metadata type \'%s\'.' % opts.metadata_type
+        print >>sys.stderr, 'Please use one of: %s.' % ', '.join(KNOWN_METADATA_TYPE)
+        sys.exit(1)
+
+    if opts.distro_style == 'auto':
+        # FIXME  
+        raise Exception('Not implemented')
+    else:
+        distro_style = opts.distro_style
+
+    if opts.metadata_type == 'auto':
+        metadata_type = guess_metadata_type(path)
+        if not metadata_type:
+            print >>sys.stderr, 'Cannot detect what kind of metadata is in \'%s\'.' % path
+            sys.exit(1)
+    else:
+        metadata_type = opts.metadata_type
+
+    if metadata_type == 'rpm-md':
+        try:
+            metadata = RpmMd(path)
+        except RpmMdException, e:
+            print >>sys.stderr, '%s' % e
+            sys.exit(2)
+    elif metadata_type == 'yast2':
+        try:
+            metadata = Yast2(path)
+        except Yast2Exception, e:
+            print >>sys.stderr, '%s' % e
+            sys.exit(2)
+    else:
+        raise Exception('Internal error: unknown metadata type \'%s\'.' % metadata_type)
+
+    metadata.export_data(distro_tag, distro_style, outdir=opts.outdir)
+
+
+if __name__ == '__main__':
+    try:
+        ret = main(sys.argv)
+        sys.exit(ret)
+    except KeyboardInterrupt:
+        sys.exit(0)
