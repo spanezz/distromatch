@@ -47,6 +47,7 @@ import sys
 import errno
 import gzip
 import hashlib
+import operator
 import optparse
 import re
 import shutil
@@ -269,12 +270,16 @@ class Metadata(object):
 
     def export_data(self, tag, style, outdir='.'):
         of = DistOutput(outdir, tag, style)
+        # It's always much more readable to sort the output
+        self.packages.sort(key=operator.attrgetter('name'))
         for package in self.packages:
             # Output the bin<->src mapping for this package
             print >>of.of_binsrc, package.name, package.src_package
 
-            # Output the file list for this package
-            for kind, fname in package.interesting:
+            # Output the file list for this package (sorted)
+            interesting = list(package.interesting)
+            interesting.sort()
+            for kind, fname in interesting:
                 print >>of.of_files, package.name, kind, fname.encode("utf-8")
 
         of.close()
