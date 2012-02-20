@@ -328,6 +328,23 @@ class RpmMd(Metadata):
         self._parse_filelists()
 
     def _parse_repomd(self):
+        def get_location(node):
+            location_node = node.find(RPM_MD_NS_REPO + 'location')
+            if location_node is None:
+                return None
+            return location_node.get('href')
+
+        def get_hash(node):
+            checksum_node = node.find(RPM_MD_NS_REPO + 'checksum')
+            if checksum_node is None:
+                return None
+            hash_type = checksum_node.get('type')
+            if not hash_type or not checksum_node.text:
+                return None
+            if hash_type == 'sha':
+                hash_type = 'sha1'
+            return (hash_type, checksum_node.text)
+
         if self._parsed_repomd:
             return
 
@@ -342,19 +359,11 @@ class RpmMd(Metadata):
 
         for data_node in root.findall(RPM_MD_NS_REPO + 'data'):
             if data_node.get('type') == 'primary':
-                location_node = data_node.find(RPM_MD_NS_REPO + 'location')
-                if location_node is not None:
-                    self._primary_filename = location_node.get('href')
-                checksum_node = data_node.find(RPM_MD_NS_REPO + 'checksum')
-                if checksum_node is not None:
-                    self._primary_hash = (checksum_node.get('type'), checksum_node.text)
+                self._primary_filename = get_location(data_node)
+                self._primary_hash = get_hash(data_node)
             elif data_node.get('type') == 'filelists':
-                location_node = data_node.find(RPM_MD_NS_REPO + 'location')
-                if location_node is not None:
-                    self._filelists_filename = location_node.get('href')
-                checksum_node = data_node.find(RPM_MD_NS_REPO + 'checksum')
-                if checksum_node is not None:
-                    self._filelists_hash = (checksum_node.get('type'), checksum_node.text)
+                self._filelists_filename = get_location(data_node)
+                self._filelists_hash = get_hash(data_node)
 
     def _parse_primary(self):
         if self._parsed_primary:
