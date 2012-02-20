@@ -47,6 +47,7 @@ import sys
 import errno
 import gzip
 import hashlib
+import logging
 import operator
 import optparse
 import re
@@ -75,6 +76,8 @@ RPM_MD_NS_RPM='{http://linux.duke.edu/metadata/rpm}'
 RPM_MD_NS_FILELISTS='{http://linux.duke.edu/metadata/filelists}'
 
 KNOWN_METADATA_TYPE = ['rpm-md', 'yast2']
+
+log = logging.getLogger(__name__)
 
 
 class HeadRequest(urllib2.Request):
@@ -269,6 +272,7 @@ class Metadata(object):
         return False
 
     def export_data(self, tag, style, outdir='.'):
+        log.info("Exporting data.")
         of = DistOutput(outdir, tag, style)
         # It's always much more readable to sort the output
         self.packages.sort(key=operator.attrgetter('name'))
@@ -283,6 +287,7 @@ class Metadata(object):
                 print >>of.of_files, package.name, kind, fname.encode("utf-8")
 
         of.close()
+        log.info("Done exporting data.")
 
 
 class RpmMd(Metadata):
@@ -366,6 +371,7 @@ class RpmMd(Metadata):
                 self._filelists_hash = get_hash(data_node)
 
     def _parse_primary(self):
+        log.info("Parsing primary xml.")
         if self._parsed_primary:
             return
 
@@ -388,6 +394,7 @@ class RpmMd(Metadata):
             self._append_package(package)
 
         self._parsed_primary = True
+        log.info("Done parsing primary xml.")
 
     def _parse_package_node(self, package_node):
         name = None
@@ -443,6 +450,7 @@ class RpmMd(Metadata):
         return (pkgid, Package(name, arch, src_package, provides, files))
 
     def _parse_filelists(self):
+        log.info("Parsing filelists xml.")
         if self._parsed_filelists:
             return
 
@@ -477,6 +485,7 @@ class RpmMd(Metadata):
             package.set_files(files)
 
         self._parsed_filelists = True
+        log.info("Done parsing filelists xml.")
 
 
 class Yast2(Metadata):
@@ -703,8 +712,16 @@ def main(args):
     parser.add_option("--metadata-type", default="auto", help="Metadata type (%s). Default: %%default" % ', '.join(KNOWN_METADATA_TYPE))
     parser.add_option("--outdir", default=".", help="Destination directory. Default: %default")
     parser.add_option("--cachedir", default="./cache", help="Cache directory. Default: %default")
+    parser.add_option("--verbose", action="store_true", help="Verbose output")
 
     (opts, args) = parser.parse_args()
+
+    date_format = "%c"
+    log_format = "[%(levelname)s] %(asctime)s: %(message)s"
+    if opts.verbose:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, datefmt=date_format, format=log_format)
+    else:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr, datefmt=date_format, format=log_format)
 
     if len(args) != 2:
         print >>sys.stderr, 'No file metadata passed as argument.'
