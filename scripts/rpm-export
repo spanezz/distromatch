@@ -169,26 +169,36 @@ class Package(object):
 
 
 class Metadata(object):
-    def __init__(self, resource, skip_arches=['src', 'x86_64'], skip_suffixes=['-32bit', '-debuginfo', '-debugsource']):
+    def __init__(self, resource, cachedir, skip_arches=['src', 'x86_64'], skip_suffixes=['-32bit', '-debuginfo', '-debugsource']):
         self.resource = resource
 
         parsed = urlparse.urlparse(self.resource)
         self._is_local = (parsed.scheme == '')
         if self._is_local:
             self._tmpdir = None
+            self._cachedir = None
         else:
             self._tmpdir = tempfile.mkdtemp()
+            self._cachedir = cachedir
 
         self.packages = []
         self._skip_arches = skip_arches
         self._skip_suffixes = skip_suffixes
 
-    def cleanup(self):
+    def cleanup(self, keep_cache=False):
         if self._tmpdir:
-            shutil.rmtree(self._tmpdir, True)
+            if keep_cache:
+                shutil.rmtree(self._cachedir, True)
+                try:
+                    shutil.move(self._tmpdir, self._cachedir)
+                except:
+                    shutil.rmtree(self._cachedir, True)
+                    shutil.rmtree(self._tmpdir, True)
+            else:
+                shutil.rmtree(self._tmpdir, True)
             self._tmpdir = None
 
-    def _fetch(self, subpath):
+    def _fetch(self, subpath, expected_hash_type = None, expected_hash = None):
         if self._is_local:
             return
 
@@ -202,6 +212,13 @@ class Metadata(object):
         except OSError, e:
             if e.errno != errno.EEXIST:
                 raise e
+
+        if expected_hash_type and expected_hash:
+            old_cache = os.path.join(self._cachedir, subpath)
+            old_hash = get_hash_from_file(expected_hash_type, old_cache)
+            if old_hash == expected_hash:
+                shutil.copy(old_cache, cache)
+                return
 
         fout = open(cache, 'w')
         try:
@@ -220,12 +237,12 @@ class Metadata(object):
         fin.close()
         fout.close()
 
-    def _get_local_path(self, subpath, fetch = True):
+    def _get_local_path(self, subpath, fetch = True, expected_hash_type = None, expected_hash = None):
         if self._is_local:
             return os.path.join(self.resource, subpath)
         else:
             if fetch:
-                self._fetch(subpath)
+                self._fetch(subpath, expected_hash_type, expected_hash)
             return os.path.join(self._tmpdir, subpath)
 
     def _append_package(self, package):
@@ -257,8 +274,8 @@ class Metadata(object):
 class RpmMd(Metadata):
     sourcerpm_re = re.compile(r'(.+)-[^-]+-[^-]+.src.rpm')
 
-    def __init__(self, resource):
-        Metadata.__init__(self, resource)
+    def __init__(self, resource, cachedir):
+        Metadata.__init__(self, resource, cachedir)
 
         self._parsed_repomd = False
         self._parsed_primary = False
@@ -266,17 +283,17 @@ class RpmMd(Metadata):
         self._primary_filename = None
         self._primary_hash = None
 
-    def _fetch(self, subpath):
+    def _fetch(self, subpath, expected_hash_type = None, expected_hash = None):
         try:
-            Metadata._fetch(self, subpath)
+            Metadata._fetch(self, subpath, expected_hash_type, expected_hash)
         except urllib2.HTTPError, e:
             raise RpmMdException('Cannot fetch %s from %s: %s' % (subpath, self.resource, e))
 
     def fetch_and_parse(self):
         self._parse_repomd()
 
-        primary_path = self._get_local_path(self._primary_filename)
         (hash_type, expected_hash) = self._primary_hash
+        primary_path = self._get_local_path(self._primary_filename, expected_hash_type=hash_type, expected_hash=expected_hash)
         real_hash = get_hash_from_file(hash_type, primary_path)
         if real_hash != expected_hash:
             raise RpmMdException('Hash of %s from %s is different from the expected value.' % (self._primary_filename, self.resource))
@@ -312,7 +329,8 @@ class RpmMd(Metadata):
         if self._primary_filename is None:
             raise RpmMdException('No primary metadata in %s.' % (self.resource,))
 
-        primary_path = self._get_local_path(self._primary_filename)
+        (hash_type, expected_hash) = self._primary_hash
+        primary_path = self._get_local_path(self._primary_filename, expected_hash_type=hash_type, expected_hash=expected_hash)
         if not os.path.exists(primary_path):
             raise RpmMdException('%s in %s does not exist.' % (self._primary_filename, self.resource))
 
@@ -376,8 +394,8 @@ class RpmMd(Metadata):
 
 
 class Yast2(Metadata):
-    def __init__(self, resource):
-        Metadata.__init__(self, resource)
+    def __init__(self, resource, cachedir):
+        Metadata.__init__(self, resource, cachedir)
 
         self._parsed_content = False
         self._parsed_packages = False
@@ -388,17 +406,17 @@ class Yast2(Metadata):
         self._packages_filename = None
         self._packages_hash = None
 
-    def _fetch(self, subpath):
+    def _fetch(self, subpath, expected_hash_type = None, expected_hash = None):
         try:
-            Metadata._fetch(self, subpath)
+            Metadata._fetch(self, subpath, expected_hash_type, expected_hash)
         except urllib2.HTTPError, e:
             raise Yast2Exception('Cannot fetch %s from %s: %s' % (subpath, self.resource, e))
 
     def fetch_and_parse(self):
         self._parse_content()
 
-        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename))
         (hash_type, expected_hash) = self._packages_hash
+        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename), expected_hash_type=hash_type, expected_hash=expected_hash)
         real_hash = get_hash_from_file(hash_type, packages_path)
         if real_hash != expected_hash:
             raise Yast2Exception('Hash of %s from %s is different from the expected value.' % (self._packages_filename, self.resource))
@@ -464,7 +482,8 @@ class Yast2(Metadata):
         if self._descrdir is None or self._packages_filename is None:
             raise Yast2Exception('No metadata about packages in %s.' % (self.resource,))
 
-        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename))
+        (hash_type, expected_hash) = self._packages_hash
+        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename), expected_hash_type=hash_type, expected_hash=expected_hash)
         if not os.path.exists(packages_path):
             raise Yast2Exception('%s in %s does not exist.' % (self._packages_filename, self.resource))
 
@@ -597,6 +616,7 @@ def main(args):
     parser.add_option("--distro-style", default="auto", help="Distribution style. Default: %default")
     parser.add_option("--metadata-type", default="auto", help="Metadata type (%s). Default: %%default" % ', '.join(KNOWN_METADATA_TYPE))
     parser.add_option("--outdir", default=".", help="Destination directory. Default: %default")
+    parser.add_option("--cachedir", default="./cache", help="Cache directory. Default: %default")
 
     (opts, args) = parser.parse_args()
 
@@ -646,12 +666,13 @@ def main(args):
         metadata_type = opts.metadata_type
 
     metadata = None
+    cachedir = os.path.join(opts.cachedir, distro_tag)
 
     try:
         if metadata_type == 'rpm-md':
-            metadata = RpmMd(resource)
+            metadata = RpmMd(resource, cachedir)
         elif metadata_type == 'yast2':
-            metadata = Yast2(resource)
+            metadata = Yast2(resource, cachedir)
         else:
             raise Exception('Internal error: unknown metadata type \'%s\'.' % metadata_type)
 
@@ -664,7 +685,7 @@ def main(args):
 
         metadata.export_data(distro_tag, distro_style, outdir=opts.outdir)
 
-        metadata.cleanup()
+        metadata.cleanup(keep_cache=True)
     except Exception, e:
         if metadata:
             metadata.cleanup()
