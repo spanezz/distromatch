@@ -1,0 +1,43 @@
+#!/bin/sh
+
+# You can choose a better mirror by just setting an environment variable. For
+# instance:
+# $ export FEDORA_MIRROR="ftp://ftp.proxad.net/mirrors/fedora.redhat.com/"
+FEDORA_MIRROR="${FEDORA_MIRROR:-http://dl.fedoraproject.org/pub/}"
+
+
+script_dir=`dirname $0`
+
+start() {
+  distro=$1
+  echo "### ${distro} [`date +"%H:%M:%S"`] ###"
+}
+
+
+# Released versions of openSUSE
+for version in 11.1 11.2 11.3 11.4 12.1; do
+  start "openSUSE ${version}"
+  ${script_dir}/rpm-export --verbose --outdir=./dists --cachedir=./cache http://download.opensuse.org/distribution/${version}/repo/oss/suse/ opensuse-${version}
+done
+
+# openSUSE Factory
+start "openSUSE Factory"
+${script_dir}/rpm-export --verbose --outdir=./dists --cachedir=./cache http://download.opensuse.org/factory/repo/oss/ opensuse-factory
+
+# Archived versions of Fedora
+for version in `seq 7 14`; do
+  start "Fedora ${version}"
+  ${script_dir}/rpm-export --verbose --outdir=./dists --cachedir=./cache http://archives.fedoraproject.org/pub/archive/fedora/linux/releases/${version}/Fedora/i386/os/ fedora-${version}
+done
+
+# Maintained versions of Fedora
+for version in 15 16; do
+  start "Fedora ${version}"
+  ${script_dir}/rpm-export --verbose --outdir=./dists --cachedir=./cache ${FEDORA_MIRROR}/fedora/linux/releases/${version}/Fedora/i386/os/ fedora-${version}
+done
+
+# Fedora Rawhide
+start "Fedora Rawhide"
+${script_dir}/rpm-export --verbose --outdir=./dists --cachedir=./cache ${FEDORA_MIRROR}/fedora/linux/development/rawhide/i386/os/ fedora-rawhide
+
+start "Done :-)"
