@@ -71,6 +71,7 @@ import dmatch.rules
 RPM_MD_NS='{http://linux.duke.edu/metadata/common}'
 RPM_MD_NS_REPO='{http://linux.duke.edu/metadata/repo}'
 RPM_MD_NS_RPM='{http://linux.duke.edu/metadata/rpm}'
+RPM_MD_NS_FILELISTS='{http://linux.duke.edu/metadata/filelists}'
 
 KNOWN_METADATA_TYPE = ['rpm-md', 'yast2']
 
@@ -166,6 +167,14 @@ class Package(object):
 
         if result:
             self.interesting.add((kind, result))
+
+    def set_files(self, files):
+        self.interesting = set()
+        if not files:
+            return
+
+        for filename in files:
+            self._match_interesting_for_file(filename)
 
 
 class Metadata(object):
@@ -279,9 +288,14 @@ class RpmMd(Metadata):
 
         self._parsed_repomd = False
         self._parsed_primary = False
+        self._parsed_filelists = False
 
         self._primary_filename = None
         self._primary_hash = None
+        self._filelists_filename = None
+        self._filelists_hash = None
+
+        self._pkgs_by_id = {}
 
     def _fetch(self, subpath, expected_hash_type = None, expected_hash = None):
         try:
@@ -298,7 +312,15 @@ class RpmMd(Metadata):
         if real_hash != expected_hash:
             raise RpmMdException('Hash of %s from %s is different from the expected value.' % (self._primary_filename, self.resource))
 
+        if self._filelists_filename:
+            (hash_type, expected_hash) = self._filelists_hash
+            filelists_path = self._get_local_path(self._filelists_filename, expected_hash_type=hash_type, expected_hash=expected_hash)
+            real_hash = get_hash_from_file(hash_type, filelists_path)
+            if real_hash != expected_hash:
+                raise RpmMdException('Hash of %s from %s is different from the expected value.' % (self._filelists_filename, self.resource))
+
         self._parse_primary()
+        self._parse_filelists()
 
     def _parse_repomd(self):
         if self._parsed_repomd:
@@ -321,6 +343,13 @@ class RpmMd(Metadata):
                 checksum_node = data_node.find(RPM_MD_NS_REPO + 'checksum')
                 if checksum_node is not None:
                     self._primary_hash = (checksum_node.get('type'), checksum_node.text)
+            elif data_node.get('type') == 'filelists':
+                location_node = data_node.find(RPM_MD_NS_REPO + 'location')
+                if location_node is not None:
+                    self._filelists_filename = location_node.get('href')
+                checksum_node = data_node.find(RPM_MD_NS_REPO + 'checksum')
+                if checksum_node is not None:
+                    self._filelists_hash = (checksum_node.get('type'), checksum_node.text)
 
     def _parse_primary(self):
         if self._parsed_primary:
@@ -337,10 +366,11 @@ class RpmMd(Metadata):
         try:
             root = ET.parse(primary_path).getroot()
         except SyntaxError, e:
-            raise RpmMdException('Cannot parse metadata: %s' % (e,))
+            raise RpmMdException('Cannot parse primary metadata: %s' % (e,))
 
         for package_node in root.findall(RPM_MD_NS + 'package'):
-            package = self._parse_package_node(package_node)
+            (pkgid, package) = self._parse_package_node(package_node)
+            self._pkgs_by_id[pkgid] = package
             self._append_package(package)
 
         self._parsed_primary = True
@@ -390,7 +420,49 @@ class RpmMd(Metadata):
                 continue
             files.append(filename)
 
-        return Package(name, arch, src_package, provides, files)
+        checksum_node = package_node.find(RPM_MD_NS + 'checksum')
+        if checksum_node is not None and checksum_node.get('pkgid').lower() == 'yes':
+            pkgid = checksum_node.text or None
+        else:
+            pkgid = None
+
+        return (pkgid, Package(name, arch, src_package, provides, files))
+
+    def _parse_filelists(self):
+        if self._parsed_filelists:
+            return
+
+        if self._filelists_filename is None:
+            self._parsed_filelists = True
+            return
+
+        (hash_type, expected_hash) = self._filelists_hash
+        filelists_path = self._get_local_path(self._filelists_filename, expected_hash_type=hash_type, expected_hash=expected_hash)
+        if not os.path.exists(filelists_path):
+            raise RpmMdException('%s in %s does not exist.' % (self._filelists_filename, self.resource))
+
+        try:
+            root = ET.parse(filelists_path).getroot()
+        except SyntaxError, e:
+            raise RpmMdException('Cannot parse filelists: %s' % (e,))
+
+        for package_node in root.findall(RPM_MD_NS_FILELISTS + 'package'):
+            pkgid = package_node.get('pkgid')
+            if not pkgid:
+                continue
+            try:
+                package = self._pkgs_by_id[pkgid]
+            except KeyError:
+                continue
+
+            files = []
+            for file_node in package_node.findall(RPM_MD_NS_FILELISTS + 'file'):
+                if file_node.get('type') == 'dir':
+                    continue
+                files.append(file_node.text)
+            package.set_files(files)
+
+        self._parsed_filelists = True
 
 
 class Yast2(Metadata):
