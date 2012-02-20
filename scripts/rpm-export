@@ -114,8 +114,12 @@ class Yast2Exception(Exception):
 class DistOutput(object):
     def __init__(self, outdir, tag, style):
         d = os.path.join(outdir, "dist-" + tag)
-        if not os.path.exists(d):
-            os.mkdir(d)
+        try:
+            os.makedirs(d)
+        except OSError, e:
+            if e.errno != errno.EEXIST:
+                raise e
+
         self.fn_style = os.path.join(d, "style")
         self.fn_binsrc = os.path.join(d, "binsrc.gz")
         self.fn_files = os.path.join(d, "interesting-files.gz")
@@ -193,6 +197,11 @@ class Metadata(object):
         else:
             self._tmpdir = tempfile.mkdtemp()
             self._cachedir = cachedir
+            try:
+                os.makedirs(os.path.dirname(cachedir))
+            except OSError, e:
+                if e.errno != errno.EEXIST:
+                    raise e
 
         self.packages = []
         self._skip_arches = skip_arches
