@@ -44,10 +44,17 @@ VERSION = "0.1"
 import os
 import sys
 
+import errno
 import gzip
 import hashlib
 import optparse
 import re
+import shutil
+import tempfile
+import urlparse
+import urllib2
+
+from posixpath import join as posixjoin # Handy for URLs
 
 try:
     from lxml import etree as ET
@@ -66,6 +73,11 @@ RPM_MD_NS_REPO='{http://linux.duke.edu/metadata/repo}'
 RPM_MD_NS_RPM='{http://linux.duke.edu/metadata/rpm}'
 
 KNOWN_METADATA_TYPE = ['rpm-md', 'yast2']
+
+
+class HeadRequest(urllib2.Request):
+    def get_method(self):
+        return "HEAD"
 
 
 def get_hash_from_file(algo, path):
@@ -157,13 +169,66 @@ class Package(object):
 
 
 class Metadata(object):
-    def __init__(self, path, skip_arches=['src', 'x86_64'], skip_suffixes=['-32bit', '-debuginfo', '-debugsource']):
-        self.path = path
+    def __init__(self, resource, skip_arches=['src', 'x86_64'], skip_suffixes=['-32bit', '-debuginfo', '-debugsource']):
+        self.resource = resource
+
+        parsed = urlparse.urlparse(self.resource)
+        self._is_local = (parsed.scheme == '')
+        if self._is_local:
+            self._tmpdir = None
+        else:
+            self._tmpdir = tempfile.mkdtemp()
+
         self.packages = []
         self._skip_arches = skip_arches
         self._skip_suffixes = skip_suffixes
 
-    def _append(self, package):
+    def cleanup(self):
+        if self._tmpdir:
+            shutil.rmtree(self._tmpdir, True)
+            self._tmpdir = None
+
+    def _fetch(self, subpath):
+        if self._is_local:
+            return
+
+        cache = os.path.join(self._tmpdir, subpath)
+        if os.path.exists(cache):
+            return
+
+        dirname = os.path.join(self._tmpdir, os.path.dirname(subpath))
+        try:
+            os.makedirs(dirname)
+        except OSError, e:
+            if e.errno != errno.EEXIST:
+                raise e
+
+        fout = open(cache, 'w')
+        try:
+            fin = urllib2.urlopen(posixjoin(self.resource, subpath))
+            while True:
+                bytes = fin.read(500 * 1024)
+                if len(bytes) == 0:
+                    break
+                fout.write(bytes)
+            fout.close()
+        except urllib2.HTTPError, e:
+            fin.close()
+            fout.close()
+            os.unlink(cache)
+            raise e
+        fin.close()
+        fout.close()
+
+    def _get_local_path(self, subpath, fetch = True):
+        if self._is_local:
+            return os.path.join(self.resource, subpath)
+        else:
+            if fetch:
+                self._fetch(subpath)
+            return os.path.join(self._tmpdir, subpath)
+
+    def _append_package(self, package):
         if self._should_skip_package(package):
             return
         self.packages.append(package)
@@ -192,8 +257,8 @@ class Metadata(object):
 class RpmMd(Metadata):
     sourcerpm_re = re.compile(r'(.+)-[^-]+-[^-]+.src.rpm')
 
-    def __init__(self, path):
-        Metadata.__init__(self, path)
+    def __init__(self, resource):
+        Metadata.__init__(self, resource)
 
         self._parsed_repomd = False
         self._parsed_primary = False
@@ -201,14 +266,20 @@ class RpmMd(Metadata):
         self._primary_filename = None
         self._primary_hash = None
 
-    def parse(self):
+    def _fetch(self, subpath):
+        try:
+            Metadata._fetch(self, subpath)
+        except urllib2.HTTPError, e:
+            raise RpmMdException('Cannot fetch %s from %s: %s' % (subpath, self.resource, e))
+
+    def fetch_and_parse(self):
         self._parse_repomd()
 
-        primary_path = os.path.join(self.path, self._primary_filename)
+        primary_path = self._get_local_path(self._primary_filename)
         (hash_type, expected_hash) = self._primary_hash
         real_hash = get_hash_from_file(hash_type, primary_path)
         if real_hash != expected_hash:
-            raise Yast2Exception('Hash of %s from %s is different from the expected value.' % (self._primary_filename, self.path))
+            raise RpmMdException('Hash of %s from %s is different from the expected value.' % (self._primary_filename, self.resource))
 
         self._parse_primary()
 
@@ -216,9 +287,9 @@ class RpmMd(Metadata):
         if self._parsed_repomd:
             return
 
-        repomd_path = os.path.join(self.path, 'repodata', 'repomd.xml')
+        repomd_path = self._get_local_path('repodata/repomd.xml')
         if not os.path.exists(repomd_path):
-            raise Yast2Exception('%s in %s does not exist.' % ('repodata/repomd.xml', self.path))
+            raise RpmMdException('%s in %s does not exist.' % ('repodata/repomd.xml', self.resource))
 
         try:
             root = ET.parse(repomd_path).getroot()
@@ -239,11 +310,11 @@ class RpmMd(Metadata):
             return
 
         if self._primary_filename is None:
-            raise Yast2Exception('No primary metadata in %s.' % (self.path,))
+            raise RpmMdException('No primary metadata in %s.' % (self.resource,))
 
-        primary_path = os.path.join(self.path, self._primary_filename)
+        primary_path = self._get_local_path(self._primary_filename)
         if not os.path.exists(primary_path):
-            raise Yast2Exception('%s in %s does not exist.' % (self._primary_filename, self.path))
+            raise RpmMdException('%s in %s does not exist.' % (self._primary_filename, self.resource))
 
         try:
             root = ET.parse(primary_path).getroot()
@@ -252,7 +323,7 @@ class RpmMd(Metadata):
 
         for package_node in root.findall(RPM_MD_NS + 'package'):
             package = self._parse_package_node(package_node)
-            self._append(package)
+            self._append_package(package)
 
         self._parsed_primary = True
 
@@ -305,8 +376,8 @@ class RpmMd(Metadata):
 
 
 class Yast2(Metadata):
-    def __init__(self, path):
-        Metadata.__init__(self, path)
+    def __init__(self, resource):
+        Metadata.__init__(self, resource)
 
         self._parsed_content = False
         self._parsed_packages = False
@@ -317,14 +388,20 @@ class Yast2(Metadata):
         self._packages_filename = None
         self._packages_hash = None
 
-    def parse(self):
+    def _fetch(self, subpath):
+        try:
+            Metadata._fetch(self, subpath)
+        except urllib2.HTTPError, e:
+            raise Yast2Exception('Cannot fetch %s from %s: %s' % (subpath, self.resource, e))
+
+    def fetch_and_parse(self):
         self._parse_content()
 
-        packages_path = os.path.join(self.path, self._descrdir, self._packages_filename)
+        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename))
         (hash_type, expected_hash) = self._packages_hash
         real_hash = get_hash_from_file(hash_type, packages_path)
         if real_hash != expected_hash:
-            raise Yast2Exception('Hash of %s from %s is different from the expected value.' % (self._packages_filename, self.path))
+            raise Yast2Exception('Hash of %s from %s is different from the expected value.' % (self._packages_filename, self.resource))
 
         self._parse_packages()
 
@@ -332,18 +409,18 @@ class Yast2(Metadata):
         if self._parsed_content:
             return
 
-        content = os.path.join(self.path, 'content')
+        content = self._get_local_path('content')
         if not os.path.exists(content):
-            raise Yast2Exception('%s in %s does not exist.' % ('content', self.path))
+            raise Yast2Exception('%s in %s does not exist.' % ('content', self.resource))
 
         fin = open(content, 'r')
         line = fin.readline()
         if not line:
-            raise Yast2Exception('%s in %s is empty.' % ('content', self.path))
+            raise Yast2Exception('%s in %s is empty.' % ('content', self.resource))
 
         contentstyle = line[:-1].split()
         if contentstyle != ['CONTENTSTYLE', '11']:
-            raise Yast2Exception('Cannot parse %s in %s: unknown format.' % ('content', self.path))
+            raise Yast2Exception('Cannot parse %s in %s: unknown format.' % ('content', self.resource))
 
         while True:
             line = fin.readline()
@@ -354,21 +431,21 @@ class Yast2(Metadata):
             items = line.split()
             if items[0] == 'DESCRDIR':
                 if len(items) != 2:
-                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('DESCRDIR', 'content', self.path, line))
+                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('DESCRDIR', 'content', self.resource, line))
                 self._descrdir = items[1]
             elif items[0] == 'DISTRIBUTION':
                 if len(items) != 2:
-                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('DISTRIBUTION', 'content', self.path, line))
+                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('DISTRIBUTION', 'content', self.resource, line))
                 self._distribution = items[1]
             elif items[0] == 'VERSION':
                 if len(items) != 2:
-                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('VERSION', 'content', self.path, line))
+                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('VERSION', 'content', self.resource, line))
                 self._version = items[1]
             elif items[0] == 'META':
                 if len(items) != 4:
-                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('META', 'content', self.path, line))
+                    raise Yast2Exception('Cannot parse %s line in %s from %s: not the expected number of items in \'%s\'' % ('META', 'content', self.resource, line))
                 if items[1] not in ('SHA1', 'SHA256'):
-                    raise Yast2Exception('Unknown hash type \'%s\' in %s.' % (items[1], self.path))
+                    raise Yast2Exception('Unknown hash type \'%s\' in %s.' % (items[1], self.resource))
                 if items[3] != 'packages.gz':
                     continue
                 self._packages_filename = items[3]
@@ -385,11 +462,11 @@ class Yast2(Metadata):
             return
 
         if self._descrdir is None or self._packages_filename is None:
-            raise Yast2Exception('No metadata about packages in %s.' % (self.path,))
+            raise Yast2Exception('No metadata about packages in %s.' % (self.resource,))
 
-        packages_path = os.path.join(self.path, self._descrdir, self._packages_filename)
+        packages_path = self._get_local_path(os.path.join(self._descrdir, self._packages_filename))
         if not os.path.exists(packages_path):
-            raise Yast2Exception('%s in %s does not exist.' % (self._packages_filename, self.path))
+            raise Yast2Exception('%s in %s does not exist.' % (self._packages_filename, self.resource))
 
         self._packages_fin = open(packages_path, 'r')
         try:
@@ -400,7 +477,7 @@ class Yast2(Metadata):
             firstline = self._packages_fin.readline()
 
         if firstline[:-1] != '=Ver: 2.0':
-            raise Yast2Exception('Cannot parse %s in %s: unknown format.' % (self._packages_filename, self.path))
+            raise Yast2Exception('Cannot parse %s in %s: unknown format.' % (self._packages_filename, self.resource))
 
         self._readline_packages()
         while True:
@@ -410,7 +487,7 @@ class Yast2(Metadata):
 
             if line.startswith('=Pkg:'):
                 package = self._parse_package()
-                self._append(package)
+                self._append_package(package)
             else:
                 self._readline_packages()
 
@@ -430,7 +507,7 @@ class Yast2(Metadata):
         text.strip()
         pkg_data = text.split()
         if len(pkg_data) != 4:
-            raise Yast2Exception('Cannot parse %s line in %s from %s: %s' % (linetype, self._packages_filename, self.path, line))
+            raise Yast2Exception('Cannot parse %s line in %s from %s: %s' % (linetype, self._packages_filename, self.resource, line))
         return pkg_data
 
     def _parse_package(self):
@@ -441,7 +518,7 @@ class Yast2(Metadata):
 
         line = self._getline_packages()
         if not line.startswith('=Pkg:'):
-            raise Yast2Exception('Internal error, not a =Pkg line in %s from %s: %s' % (self._packages_filename, self.path, line))
+            raise Yast2Exception('Internal error, not a =Pkg line in %s from %s: %s' % (self._packages_filename, self.resource, line))
 
         pkg_data = self._parse_pkgdata(line, '=Pkg')
         name = pkg_data[0]
@@ -460,7 +537,7 @@ class Yast2(Metadata):
                 try:
                     line.encode("utf-8")
                 except UnicodeDecodeError, e:
-                    print >>sys.stderr, 'Skipping badly encoded provides for %s in %s from %s: %s' % (name, self._packages_filename, self.path, line)
+                    print >>sys.stderr, 'Skipping badly encoded provides for %s in %s from %s: %s' % (name, self._packages_filename, self.resource, line)
                 else:
                     provides.append(line)
             elif line.startswith('+Prv:'):
@@ -468,27 +545,53 @@ class Yast2(Metadata):
                 continue
             elif line.startswith('=Src:'):
                 if src_package is not None:
-                    raise Yast2Exception('Error while parsing package %s in %s from %s: two =Src lines.' % (name, self._packages_filename, self.path))
+                    raise Yast2Exception('Error while parsing package %s in %s from %s: two =Src lines.' % (name, self._packages_filename, self.resource))
                 pkg_data = self._parse_pkgdata(line, '=Src')
                 src_package = pkg_data[0]
 
         if not src_package:
-            raise Yast2Exception('No source package for %s in %s from %s.' % (name, self._packages_filename, self.path))
+            raise Yast2Exception('No source package for %s in %s from %s.' % (name, self._packages_filename, self.resource))
 
         return Package(name, arch, src_package, provides, None, files_in_provides=True)
 
 
-def guess_metadata_type(path):
-    if os.path.exists(os.path.join(path, 'repodata', 'repomd.xml')):
-        return 'rpm-md'
-    elif os.path.exists(os.path.join(path, 'content')):
-        return 'yast2'
+def guess_distro_style(resource):
+    if resource.find('/download.opensuse.org/distribution/') != -1 or resource.find('/download.opensuse.org/update/') != -1 or resource.find('/download.opensuse.org/factory/') != -1:
+        return 'suse'
+    if resource.find('/fedora/linux/') != -1:
+        return 'fedora'
 
     return None
 
 
+def guess_metadata_type(resource):
+    parsed = urlparse.urlparse(resource)
+
+    if not parsed.scheme:
+        if os.path.exists(os.path.join(resource, 'repodata', 'repomd.xml')):
+            return 'rpm-md'
+        elif os.path.exists(os.path.join(resource, 'content')):
+            return 'yast2'
+    else:
+        try:
+            url = posixjoin(resource, 'repodata', 'repomd.xml')
+            urllib2.urlopen(HeadRequest(url))
+            return 'rpm-md'
+        except urllib2.HTTPError, e:
+            if e.code != 404:
+                raise e
+        try:
+            url = posixjoin(resource, 'content')
+            urllib2.urlopen(HeadRequest(url))
+            return 'yast2'
+        except urllib2.HTTPError, e:
+            if e.code != 404:
+                raise e
+
+    return None
+
 def main(args):
-    parser = optparse.OptionParser(usage="usage: %prog [options] PATH DISTRO_TAG",
+    parser = optparse.OptionParser(usage="usage: %prog [options] RESOURCE DISTRO_TAG",
                     version="%prog "+ VERSION,
                     description="Export distromatch info from RPM-MD/YaST2 metadata")
     parser.add_option("--distro-style", default="auto", help="Distribution style. Default: %default")
@@ -501,15 +604,18 @@ def main(args):
         print >>sys.stderr, 'No file metadata passed as argument.'
         sys.exit(1)
 
-    path = args[0]
+    resource = args[0]
     distro_tag = args[1]
 
-    if not os.path.exists(path):
-        print >>sys.stderr, '\'%s\' does not exist.' % path
-        sys.exit(1)
-    if not os.path.isdir(path):
-        print >>sys.stderr, '\'%s\' is not a directory.' % path
-        sys.exit(1)
+    parsed = urlparse.urlparse(resource)
+
+    if not parsed.scheme:
+        if not os.path.exists(resource):
+            print >>sys.stderr, '\'%s\' does not exist.' % resource
+            sys.exit(1)
+        if not os.path.isdir(resource):
+            print >>sys.stderr, '\'%s\' is not a directory.' % resource
+            sys.exit(1)
 
     if opts.distro_style != 'auto' and opts.distro_style not in dmatch.rules.STEMMERS.keys():
         print >>sys.stderr, 'Unknown distribution style \'%s\'.' % opts.distro_style
@@ -524,34 +630,45 @@ def main(args):
         sys.exit(1)
 
     if opts.distro_style == 'auto':
-        # FIXME  
-        raise Exception('Not implemented')
+        distro_style = guess_distro_style(resource)
+        if not distro_style:
+            print >>sys.stderr, 'Cannot detect what style of distribution is in \'%s\'.' % resource
+            sys.exit(1)
     else:
         distro_style = opts.distro_style
 
     if opts.metadata_type == 'auto':
-        metadata_type = guess_metadata_type(path)
+        metadata_type = guess_metadata_type(resource)
         if not metadata_type:
-            print >>sys.stderr, 'Cannot detect what kind of metadata is in \'%s\'.' % path
+            print >>sys.stderr, 'Cannot detect what kind of metadata is in \'%s\'.' % resource
             sys.exit(1)
     else:
         metadata_type = opts.metadata_type
 
-    if metadata_type == 'rpm-md':
-        metadata = RpmMd(path)
-    elif metadata_type == 'yast2':
-        metadata = Yast2(path)
-    else:
-        raise Exception('Internal error: unknown metadata type \'%s\'.' % metadata_type)
+    metadata = None
 
     try:
-        metadata.parse()
-    except (RpmMdException, Yast2Exception), e:
-        print >>sys.stderr, '%s' % e
-        sys.exit(2)
+        if metadata_type == 'rpm-md':
+            metadata = RpmMd(resource)
+        elif metadata_type == 'yast2':
+            metadata = Yast2(resource)
+        else:
+            raise Exception('Internal error: unknown metadata type \'%s\'.' % metadata_type)
 
-    metadata.export_data(distro_tag, distro_style, outdir=opts.outdir)
+        try:
+            metadata.fetch_and_parse()
+        except (RpmMdException, Yast2Exception), e:
+            metadata.cleanup()
+            print >>sys.stderr, '%s' % e
+            sys.exit(2)
 
+        metadata.export_data(distro_tag, distro_style, outdir=opts.outdir)
+
+        metadata.cleanup()
+    except Exception, e:
+        if metadata:
+            metadata.cleanup()
+        raise e
 
 if __name__ == '__main__':
     try:
