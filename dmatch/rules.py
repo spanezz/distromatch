@@ -130,7 +130,7 @@ CONTENT_INFO = {
             match=re.compile(r"[./]*usr/share/man/(.+)$"),
             sophie=dict(like=["/usr/share/man/%"])),
         'py': ContentMatch('XFPY', desc="python modules",
-            match=re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/site-packages/(.+\.py)$"),
+            match=re.compile(r"[./]*usr/(?:share|lib\d*)/python[0-9.]*/(?:site|dist)-packages/(.+\.py)$"),
             sophie=dict(like=["/usr/%/python%/site-packages/%"])),
 }
 
