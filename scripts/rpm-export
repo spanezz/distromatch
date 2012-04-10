@@ -67,7 +67,7 @@ except ImportError:
         import cElementTree as ET
 
 # FIXME: I hate messing with sys.path
-sys.path.append("..")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import dmatch.rules
 
 RPM_MD_NS='{http://linux.duke.edu/metadata/common}'
