@@ -90,7 +90,14 @@ def get_hash_from_file(algo, path):
     if not os.path.exists(path):
         return None
 
-    if algo not in hashlib.algorithms:
+    # hashlib.algorithms is from python 2.7; for earlier versions, just
+    # hardcode the default list of algorithms
+    if hasattr(hashlib, 'algorithms'):
+        algorithms = hashlib.algorithms
+    else:
+        algorithms = ('md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512')
+
+    if algo not in algorithms:
         print >>sys.stderr, 'Cannot compute hash with hash algorithm: %s' % algo
         return None
 
